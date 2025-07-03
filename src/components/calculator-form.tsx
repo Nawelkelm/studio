@@ -112,7 +112,6 @@ export default function CalculatorForm() {
 
         const doc = new jsPDF();
         const formValues = form.getValues();
-        const totalPrintTimeHours = Number(formValues.printTimeHours) + (Number(formValues.printTimeMinutes) / 60);
 
         // Header
         doc.setFontSize(22);
@@ -134,11 +133,16 @@ export default function CalculatorForm() {
         doc.setFontSize(12);
         doc.text(`Fecha: ${new Date().toLocaleDateString('es-AR')}`, 140, 50);
         doc.text(`Cliente: ${clientName}`, 14, 50);
+        
+        // Robustly parse time values for display
+        const printHours = parseFloat(String(formValues.printTimeHours || "0"));
+        const printMinutes = parseFloat(String(formValues.printTimeMinutes || "0"));
+        const electricityDetail = `${printHours} hs ${printMinutes} min @ ${formValues.printerPower}W`;
 
         // Table
         const tableData = [
             ['Costo de Material', `${formValues.printWeightGrams}g de ${formValues.materialUsed}`, formatCurrency(results.materialCost)],
-            ['Costo de Electricidad', `${totalPrintTimeHours.toFixed(2)} hs @ ${formValues.printerPower}W`, formatCurrency(results.electricityCost)],
+            ['Costo de Electricidad', electricityDetail, formatCurrency(results.electricityCost)],
             ['Amortización de Máquina', `Vida útil: ${formValues.printerLifespan} hs`, formatCurrency(results.depreciationCost)],
             ['Margen de Error', `${formValues.failureRatePercent}%`, formatCurrency(results.errorMarginCost)],
             ['Costos Adicionales (Insumos)', '', formatCurrency(results.suppliesCost)],
