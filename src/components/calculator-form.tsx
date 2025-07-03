@@ -4,13 +4,16 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { BarChart3, Calculator } from "lucide-react"
+import jsPDF from 'jspdf'
+import 'jspdf-autotable'
+import { BarChart3, Calculator, FileText } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 import {
   Card,
   CardContent,
   CardDescription,
+  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
@@ -25,10 +28,16 @@ import {
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
-import AiPricingAssistant from "./ai-pricing-assistant"
+
+declare module 'jspdf' {
+  interface jsPDF {
+    autoTable: (options: any) => jsPDF;
+  }
+}
 
 const calculatorSchema = z.object({
   filamentCostPerKg: z.coerce.number().min(0).default(15000),
+  materialUsed: z.string().min(1, "Requerido").default("PLA"),
   electricityCostKwh: z.coerce.number().min(0).default(140),
   printerPower: z.coerce.number().min(1).default(120),
   printerLifespan: z.coerce.number().min(1).default(4320),
@@ -49,7 +58,6 @@ type CalculationResults = {
   depreciationCost: number;
   errorMarginCost: number;
   suppliesCost: number;
-  lightAndMaterialCost: number;
   totalCostWithSupplies: number;
   sellingPrice: number;
   mercadoLibrePrice: number;
@@ -59,6 +67,7 @@ const MERCADOLIBRE_FEE_MULTIPLIER = 1.16;
 
 export default function CalculatorForm() {
     const [results, setResults] = useState<CalculationResults | null>(null);
+    const [clientName, setClientName] = useState("");
 
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
@@ -92,11 +101,76 @@ export default function CalculatorForm() {
             depreciationCost,
             errorMarginCost,
             suppliesCost,
-            lightAndMaterialCost: baseCost,
             totalCostWithSupplies,
             sellingPrice,
             mercadoLibrePrice,
         });
+    };
+    
+    const handleExportToPdf = () => {
+        if (!results || !form.getValues() || !clientName.trim()) return;
+
+        const doc = new jsPDF();
+        const formValues = form.getValues();
+        const totalPrintTimeHours = formValues.printTimeHours + (formValues.printTimeMinutes / 60);
+
+        // Header
+        doc.setFontSize(22);
+        doc.setFont("helvetica", "bold");
+        doc.text("FACTURA", 14, 22);
+        doc.setFontSize(10);
+        doc.setFont("helvetica", "normal");
+        doc.text("TIPO C", 15, 28);
+        
+        doc.setFontSize(12);
+        doc.text("Mi Emprendimiento 3D", 140, 22);
+        doc.setFontSize(10);
+        doc.text("CUIT: XX-XXXXXXXX-X", 140, 28);
+        doc.text("Dirección: Calle Falsa 123", 140, 33);
+        
+        doc.line(14, 40, 196, 40);
+
+        // Client and Date info
+        doc.setFontSize(12);
+        doc.text(`Fecha: ${new Date().toLocaleDateString('es-AR')}`, 140, 50);
+        doc.text(`Cliente: ${clientName}`, 14, 50);
+
+        // Table
+        const tableData = [
+            ['Costo de Material', `${formValues.printWeightGrams}g de ${formValues.materialUsed}`, formatCurrency(results.materialCost)],
+            ['Costo de Electricidad', `${totalPrintTimeHours.toFixed(2)} hs @ ${formValues.printerPower}W`, formatCurrency(results.electricityCost)],
+            ['Amortización de Máquina', `Vida útil: ${formValues.printerLifespan} hs`, formatCurrency(results.depreciationCost)],
+            ['Margen de Error', `${formValues.failureRatePercent}%`, formatCurrency(results.errorMarginCost)],
+            ['Costos Adicionales (Insumos)', '', formatCurrency(results.suppliesCost)],
+        ];
+
+        doc.autoTable({
+            startY: 60,
+            head: [['Descripción', 'Detalle', 'Subtotal']],
+            body: tableData,
+            theme: 'striped',
+            headStyles: { fillColor: [88, 28, 135] }, // Violet color
+        });
+
+        const finalY = (doc as any).lastAutoTable.finalY || 100;
+
+        // Totals
+        doc.setFontSize(12);
+        doc.setFont("helvetica", "bold");
+        doc.text("Costo de Producción:", 140, finalY + 15, { align: 'right' });
+        doc.text(formatCurrency(results.totalCostWithSupplies), 196, finalY + 15, { align: 'right' });
+
+        doc.setFontSize(14);
+        doc.text("TOTAL:", 140, finalY + 25, { align: 'right' });
+        doc.text(formatCurrency(results.sellingPrice), 196, finalY + 25, { align: 'right' });
+        
+        // Footer
+        const pageHeight = doc.internal.pageSize.height;
+        doc.line(14, pageHeight - 20, 196, pageHeight - 20);
+        doc.setFontSize(8);
+        doc.text("Documento no válido como comprobante fiscal.", 105, pageHeight - 15, { align: 'center' });
+        
+        doc.save(`Factura-${clientName.replace(/\s/g, '_') || 'Cliente'}.pdf`);
     };
 
     return (
@@ -106,36 +180,35 @@ export default function CalculatorForm() {
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
                         <div className="space-y-6">
                             <Card>
-                                <CardHeader><CardTitle className="text-xl text-accent">Gastos Fijos</CardTitle></CardHeader>
+                                <CardHeader><CardTitle className="text-xl text-primary">Gastos Fijos</CardTitle></CardHeader>
                                 <CardContent className="space-y-4">
-                                    <FormField control={form.control} name="filamentCostPerKg" render={({ field }) => ( <FormItem><FormLabel>Precio KG (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <FormField control={form.control} name="electricityCostKwh" render={({ field }) => ( <FormItem><FormLabel>Precio Kwh (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <FormField control={form.control} name="printerPower" render={({ field }) => ( <FormItem><FormLabel>Consumo real por hora (W)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <FormField control={form.control} name="printerLifespan" render={({ field }) => ( <FormItem><FormLabel>Desgaste máquina (horas)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <FormField control={form.control} name="printerCost" render={({ field }) => ( <FormItem><FormLabel>Precio Repuestos (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <FormField control={form.control} name="failureRatePercent" render={({ field }) => ( <FormItem><FormLabel>% Margen de Error</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                      <FormField control={form.control} name="filamentCostPerKg" render={({ field }) => ( <FormItem><FormLabel>Costo Filamento (kg)</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                      <FormField control={form.control} name="materialUsed" render={({ field }) => ( <FormItem><FormLabel>Tipo de Material</FormLabel><FormControl><Input placeholder="Ej: PLA, PETG" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    </div>
+                                    <FormField control={form.control} name="electricityCostKwh" render={({ field }) => ( <FormItem><FormLabel>Costo Electricidad (Kwh)</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printerPower" render={({ field }) => ( <FormItem><FormLabel>Consumo Impresora (Watts)</FormLabel><FormControl><Input type="number" step="any" placeholder="Watts" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printerLifespan" render={({ field }) => ( <FormItem><FormLabel>Vida Útil Impresora (horas)</FormLabel><FormControl><Input type="number" step="any" placeholder="Horas" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printerCost" render={({ field }) => ( <FormItem><FormLabel>Costo Amortización</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="failureRatePercent" render={({ field }) => ( <FormItem><FormLabel>Tasa de Fallos (%)</FormLabel><FormControl><Input type="number" step="any" placeholder="%" {...field} /></FormControl><FormMessage /></FormItem> )} />
                                 </CardContent>
                             </Card>
                             <Card>
-                                <CardHeader><CardTitle className="text-xl text-accent">Pieza</CardTitle></CardHeader>
+                                <CardHeader><CardTitle className="text-xl text-primary">Costos de Pieza</CardTitle></CardHeader>
                                 <CardContent className="space-y-4">
                                     <FormLabel>Tiempo de impresión</FormLabel>
                                     <div className="grid grid-cols-2 gap-4">
                                         <FormField control={form.control} name="printTimeHours" render={({ field }) => ( <FormItem><FormLabel className="text-xs text-muted-foreground">Horas</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
                                         <FormField control={form.control} name="printTimeMinutes" render={({ field }) => ( <FormItem><FormLabel className="text-xs text-muted-foreground">Minutos</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
                                     </div>
-                                    <FormField control={form.control} name="printWeightGrams" render={({ field }) => ( <FormItem><FormLabel>Gramos de filamento</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <FormField control={form.control} name="extraCosts" render={({ field }) => ( <FormItem><FormLabel>INSUMOS (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printWeightGrams" render={({ field }) => ( <FormItem><FormLabel>Peso de la Pieza (gramos)</FormLabel><FormControl><Input type="number" step="any" placeholder="Gramos" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="extraCosts" render={({ field }) => ( <FormItem><FormLabel>Costos Adicionales</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
                                 </CardContent>
                             </Card>
                             <Card>
-                                <CardHeader><CardTitle className="text-xl text-accent">Ganancia</CardTitle></CardHeader>
+                                <CardHeader><CardTitle className="text-xl text-primary">Ganancia</CardTitle></CardHeader>
                                 <CardContent className="space-y-4">
-                                    <FormField control={form.control} name="profitMultiplier" render={({ field }) => ( <FormItem><FormLabel>Margen de ganancia (multiplicador)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <div>
-                                        <FormLabel>Referencias:</FormLabel>
-                                        <p className="text-sm text-muted-foreground mt-2"> Precio Minorista → 4<br/> Precio Mayorista → 3<br/> Precio Llaveros → 5 </p>
-                                    </div>
+                                    <FormField control={form.control} name="profitMultiplier" render={({ field }) => ( <FormItem><FormLabel>Multiplicador de Ganancia</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
                                 </CardContent>
                             </Card>
                              <div className="flex justify-center pt-4">
@@ -150,30 +223,44 @@ export default function CalculatorForm() {
                                <Card className="shadow-lg">
                                    <CardHeader>
                                        <div className="flex items-center gap-3">
-                                           <BarChart3 className="w-6 h-6 text-accent" />
-                                           <CardTitle>Resultados</CardTitle>
+                                           <BarChart3 className="w-6 h-6 text-primary" />
+                                           <CardTitle>Resultados del Cálculo</CardTitle>
                                        </div>
-                                       <CardDescription>Desglose de costos y precio de venta.</CardDescription>
+                                       <CardDescription>Desglose de costos y precio de venta sugerido.</CardDescription>
                                    </CardHeader>
                                    <CardContent className="space-y-2">
-                                       <ResultRow label="Precio Material" value={results.materialCost}/>
-                                       <ResultRow label="Precio Luz" value={results.electricityCost}/>
-                                       <ResultRow label="Desgaste Máquina" value={results.depreciationCost}/>
+                                       <ResultRow label="Costo de Material" value={results.materialCost}/>
+                                       <ResultRow label="Costo de Electricidad" value={results.electricityCost}/>
+                                       <ResultRow label="Amortización de Máquina" value={results.depreciationCost}/>
                                        <ResultRow label="Margen de Error" value={results.errorMarginCost}/>
-                                       <ResultRow label="INSUMOS" value={results.suppliesCost}/>
+                                       <ResultRow label="Costos Adicionales" value={results.suppliesCost}/>
                                        <Separator className="my-3 bg-border/50"/>
-                                       <ResultRow label="Costo Luz y Material" value={results.lightAndMaterialCost}/>
-                                       <ResultRow label="Costo Total (incluye insumos)" value={results.totalCostWithSupplies}/>
+                                       <ResultRow label="Costo de Producción Total" value={results.totalCostWithSupplies} isBold={true} />
                                        <Separator className="my-3 bg-border/50"/>
-                                       <ResultRow label="TOTAL A COBRAR" value={results.sellingPrice} className="text-2xl text-primary" isBold={true}/>
-                                       <ResultRow label="PRECIO MERCADOLIBRE" value={results.mercadoLibrePrice} className="text-2xl text-yellow-400" isBold={true}/>
+                                       <ResultRow label="Precio de Venta" value={results.sellingPrice} className="text-2xl text-primary" isBold={true}/>
+                                       <ResultRow label="Precio para MercadoLibre" value={results.mercadoLibrePrice} className="text-xl text-yellow-400" isBold={true}/>
                                    </CardContent>
+                                   <CardFooter className="flex-col items-stretch gap-4 pt-4 border-t border-border/50">
+                                      <Input
+                                          id="clientName"
+                                          value={clientName}
+                                          onChange={(e) => setClientName(e.target.value)}
+                                          placeholder="Nombre del cliente para la factura"
+                                      />
+                                      <Button
+                                          onClick={handleExportToPdf}
+                                          disabled={!results || !clientName.trim()}
+                                      >
+                                          <FileText className="mr-2 h-5 w-5" /> Exportar a Factura (PDF)
+                                      </Button>
+                                  </CardFooter>
                                </Card>
                            ) : (
                             <Card className="shadow-lg flex items-center justify-center h-full min-h-[300px] bg-card/50 border-dashed">
                                 <div className="text-center text-muted-foreground p-4">
-                                    <p>Completa los datos y haz clic en 'Calcular'</p>
-                                    <p>para ver los resultados aquí.</p>
+                                    <Calculator className="mx-auto h-12 w-12 mb-4" />
+                                    <p className="font-semibold text-lg">Esperando cálculo...</p>
+                                    <p>Completa los datos y haz clic en 'Calcular' para ver los resultados aquí.</p>
                                 </div>
                             </Card>
                            )}
@@ -189,8 +276,6 @@ const formatCurrency = (value: number) => {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency: "ARS",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
   }).format(value || 0);
 };
 
