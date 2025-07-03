@@ -25,6 +25,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
+import AiPricingAssistant from "./ai-pricing-assistant"
 
 const calculatorSchema = z.object({
   filamentCostPerKg: z.coerce.number().min(0).default(15000),
@@ -58,7 +59,6 @@ const MERCADOLIBRE_FEE_MULTIPLIER = 1.16;
 
 export default function CalculatorForm() {
     const [results, setResults] = useState<CalculationResults | null>(null);
-    const [currency, setCurrency] = useState("ARS");
 
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
@@ -98,25 +98,9 @@ export default function CalculatorForm() {
             mercadoLibrePrice,
         });
     };
-    
-    const CurrencyButton = ({ value, label, current, onClick, disabled = false }: { value: string, label: string, current: string, onClick: (value: string) => void, disabled?: boolean }) => (
-      <Button
-        type="button"
-        variant={current === value ? 'default' : 'outline'}
-        onClick={() => onClick(value)}
-        disabled={disabled}
-      >
-        {label}
-      </Button>
-    );
 
     return (
         <div className="w-full max-w-7xl mx-auto">
-             <div className="flex justify-center mb-6 gap-2">
-                <CurrencyButton value="ARS" label="ARS $" current={currency} onClick={setCurrency} />
-                <CurrencyButton value="USD" label="USD US$" current={currency} onClick={setCurrency} disabled />
-                <CurrencyButton value="EUR" label="EUR €" current={currency} onClick={setCurrency} disabled />
-            </div>
             <Form {...form}>
                 <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
                     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
@@ -172,17 +156,17 @@ export default function CalculatorForm() {
                                        <CardDescription>Desglose de costos y precio de venta.</CardDescription>
                                    </CardHeader>
                                    <CardContent className="space-y-2">
-                                       <ResultRow label="Precio Material" value={results.materialCost} currency={currency}/>
-                                       <ResultRow label="Precio Luz" value={results.electricityCost} currency={currency}/>
-                                       <ResultRow label="Desgaste Máquina" value={results.depreciationCost} currency={currency}/>
-                                       <ResultRow label="Margen de Error" value={results.errorMarginCost} currency={currency}/>
-                                       <ResultRow label="INSUMOS" value={results.suppliesCost} currency={currency}/>
+                                       <ResultRow label="Precio Material" value={results.materialCost}/>
+                                       <ResultRow label="Precio Luz" value={results.electricityCost}/>
+                                       <ResultRow label="Desgaste Máquina" value={results.depreciationCost}/>
+                                       <ResultRow label="Margen de Error" value={results.errorMarginCost}/>
+                                       <ResultRow label="INSUMOS" value={results.suppliesCost}/>
                                        <Separator className="my-3 bg-border/50"/>
-                                       <ResultRow label="Costo Luz y Material" value={results.lightAndMaterialCost} currency={currency}/>
-                                       <ResultRow label="Costo Total (incluye insumos)" value={results.totalCostWithSupplies} currency={currency}/>
+                                       <ResultRow label="Costo Luz y Material" value={results.lightAndMaterialCost}/>
+                                       <ResultRow label="Costo Total (incluye insumos)" value={results.totalCostWithSupplies}/>
                                        <Separator className="my-3 bg-border/50"/>
-                                       <ResultRow label="TOTAL A COBRAR" value={results.sellingPrice} currency={currency} className="text-2xl text-primary" isBold={true}/>
-                                       <ResultRow label="PRECIO MERCADOLIBRE" value={results.mercadoLibrePrice} currency={currency} className="text-2xl text-yellow-400" isBold={true}/>
+                                       <ResultRow label="TOTAL A COBRAR" value={results.sellingPrice} className="text-2xl text-primary" isBold={true}/>
+                                       <ResultRow label="PRECIO MERCADOLIBRE" value={results.mercadoLibrePrice} className="text-2xl text-yellow-400" isBold={true}/>
                                    </CardContent>
                                </Card>
                            ) : (
@@ -201,7 +185,7 @@ export default function CalculatorForm() {
     );
 }
 
-const formatCurrency = (value: number, currency: string) => {
+const formatCurrency = (value: number) => {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency: "ARS",
@@ -210,9 +194,9 @@ const formatCurrency = (value: number, currency: string) => {
   }).format(value || 0);
 };
 
-const ResultRow = ({ label, value, currency, isBold = false, className = "" }: { label: string, value: number, currency: string, isBold?: boolean, className?: string }) => (
+const ResultRow = ({ label, value, isBold = false, className = "" }: { label: string, value: number, isBold?: boolean, className?: string }) => (
     <div className={cn("flex justify-between items-baseline", isBold ? "font-bold" : "", className)}>
         <p className={cn("text-sm", isBold ? "" : "text-muted-foreground")}>{label}</p>
-        <p className="font-mono tracking-tight">{formatCurrency(value, currency)}</p>
+        <p className="font-mono tracking-tight">{formatCurrency(value)}</p>
     </div>
 );
