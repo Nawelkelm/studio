@@ -16,9 +16,9 @@ import { Sparkles, Bot } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 
 const aiPricingSchema = z.object({
-  productDescription: z.string().min(10, "Please provide a more detailed description.").max(500),
-  materialUsed: z.string().min(2, "Material is required.").max(50),
-  printingTime: z.coerce.number().min(0.1, "Printing time must be at least 0.1 hours."),
+  productDescription: z.string().min(10, "Por favor, proporciona una descripción más detallada.").max(500),
+  materialUsed: z.string().min(2, "El material es requerido.").max(50),
+  printingTime: z.coerce.number().min(0.1, "El tiempo de impresión debe ser de al menos 0.1 horas."),
 })
 
 type AiPricingFormValues = z.infer<typeof aiPricingSchema>
@@ -43,7 +43,7 @@ export default function AiPricingAssistant() {
     try {
       const response = await suggestPricing({
         ...data,
-        printingTime: `${data.printingTime} hours`,
+        printingTime: `${data.printingTime} horas`,
       })
       setResult(response)
     } catch (error) {
@@ -51,7 +51,7 @@ export default function AiPricingAssistant() {
       toast({
         variant: "destructive",
         title: "Error",
-        description: "Failed to get a suggestion from the AI. Please try again.",
+        description: "No se pudo obtener una sugerencia de la IA. Por favor, inténtalo de nuevo.",
       })
     } finally {
       setIsLoading(false)
@@ -61,9 +61,9 @@ export default function AiPricingAssistant() {
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle>AI Pricing Assistant</CardTitle>
+        <CardTitle>Asistente de Precios IA</CardTitle>
         <CardDescription>
-          Get an AI-powered price suggestion based on your product details.
+          Obtén una sugerencia de precio con IA basada en los detalles de tu producto.
         </CardDescription>
       </CardHeader>
       <Form {...form}>
@@ -74,9 +74,9 @@ export default function AiPricingAssistant() {
               name="productDescription"
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>Product Description</FormLabel>
+                  <FormLabel>Descripción del Producto</FormLabel>
                   <FormControl>
-                    <Textarea placeholder="e.g., A detailed miniature of a fantasy castle" {...field} />
+                    <Textarea placeholder="Ej: Una miniatura detallada de un castillo de fantasía" {...field} />
                   </FormControl>
                   <FormMessage />
                 </FormItem>
@@ -88,9 +88,9 @@ export default function AiPricingAssistant() {
                 name="materialUsed"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Material Used</FormLabel>
+                    <FormLabel>Material Usado</FormLabel>
                     <FormControl>
-                      <Input placeholder="e.g., PLA, ABS, PETG" {...field} />
+                      <Input placeholder="Ej: PLA, ABS, PETG" {...field} />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
@@ -101,7 +101,7 @@ export default function AiPricingAssistant() {
                 name="printingTime"
                 render={({ field }) => (
                   <FormItem>
-                    <FormLabel>Printing Time (hours)</FormLabel>
+                    <FormLabel>Tiempo de Impresión (horas)</FormLabel>
                     <FormControl>
                       <Input type="number" step="0.1" {...field} />
                     </FormControl>
@@ -114,7 +114,7 @@ export default function AiPricingAssistant() {
           <CardFooter>
             <Button type="submit" disabled={isLoading} className="bg-accent hover:bg-accent/90">
               <Sparkles className="mr-2 h-4 w-4" />
-              {isLoading ? "Getting Suggestion..." : "Get Suggestion"}
+              {isLoading ? "Obteniendo Sugerencia..." : "Obtener Sugerencia"}
             </Button>
           </CardFooter>
         </form>
@@ -128,19 +128,19 @@ export default function AiPricingAssistant() {
               <CardHeader className="flex flex-row items-start gap-4">
                 <Bot className="h-8 w-8 text-accent shrink-0 mt-1"/>
                 <div>
-                  <CardTitle>AI Suggestion</CardTitle>
+                  <CardTitle>Sugerencia de la IA</CardTitle>
                   <CardDescription>
-                    Based on the information provided, here's a pricing suggestion.
+                    Basado en la información proporcionada, aquí tienes una sugerencia de precio.
                   </CardDescription>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Suggested Price</p>
+                  <p className="text-sm font-medium text-muted-foreground">Precio Sugerido</p>
                   <p className="text-3xl font-bold text-accent">{result.suggestedPrice}</p>
                 </div>
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">Reasoning</p>
+                  <p className="text-sm font-medium text-muted-foreground">Razonamiento</p>
                   <p className="text-sm text-foreground/90 whitespace-pre-wrap">{result.reasoning}</p>
                 </div>
               </CardContent>

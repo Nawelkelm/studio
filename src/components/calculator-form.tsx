@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useMemo } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -82,6 +82,7 @@ const LOCAL_STORAGE_KEY = "3d-print-profile";
 
 export default function CalculatorForm() {
     const { toast } = useToast();
+    const [isMounted, setIsMounted] = useState(false);
     
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
@@ -91,6 +92,7 @@ export default function CalculatorForm() {
     const { reset } = form;
 
     useEffect(() => {
+        setIsMounted(true);
         try {
             const savedProfile = localStorage.getItem(LOCAL_STORAGE_KEY);
             if (savedProfile) {
@@ -143,14 +145,14 @@ export default function CalculatorForm() {
             const values = form.getValues();
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(values));
             toast({
-                title: "Profile Saved",
-                description: "Your calculator settings have been saved.",
+                title: "Perfil Guardado",
+                description: "La configuración de tu calculadora ha sido guardada.",
             });
         } catch (error) {
             toast({
                 variant: "destructive",
                 title: "Error",
-                description: "Could not save profile to local storage.",
+                description: "No se pudo guardar el perfil.",
             });
         }
     };
@@ -162,21 +164,21 @@ export default function CalculatorForm() {
                 const values = calculatorSchema.parse(JSON.parse(savedProfile));
                 form.reset(values);
                 toast({
-                    title: "Profile Loaded",
-                    description: "Your settings have been restored.",
+                    title: "Perfil Cargado",
+                    description: "Tu configuración ha sido restaurada.",
                 });
             } else {
                 toast({
                     variant: "destructive",
-                    title: "No Profile Found",
-                    description: "There's no saved profile to load.",
+                    title: "No se encontró perfil",
+                    description: "No hay un perfil guardado para cargar.",
                 });
             }
         } catch (error) {
              toast({
                 variant: "destructive",
                 title: "Error",
-                description: "Could not load profile. It might be corrupted.",
+                description: "No se pudo cargar el perfil. Podría estar corrupto.",
             });
         }
     };
@@ -185,9 +187,13 @@ export default function CalculatorForm() {
         form.reset(calculatorSchema.parse({}));
         localStorage.removeItem(LOCAL_STORAGE_KEY);
         toast({
-            title: "Reset",
-            description: "Calculator has been reset to default values."
+            title: "Restablecido",
+            description: "La calculadora ha sido restablecida a sus valores por defecto."
         });
+    }
+
+    if (!isMounted) {
+        return null;
     }
 
     return (
@@ -195,51 +201,51 @@ export default function CalculatorForm() {
             <form className="space-y-8" onSubmit={(e) => e.preventDefault()}>
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
                     <div className="lg:col-span-2 space-y-8">
-                        <InputCard icon={Printer} title="Printer & Energy" description="Costs related to your 3D printer and electricity.">
+                        <InputCard icon={Printer} title="Impresora y Energía" description="Costos relacionados con tu impresora 3D y electricidad.">
                             <FormField control={form.control} name="printerCost" render={({ field }) => (
-                                <FormItem><FormLabel>Printer Cost ($)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Costo de la Impresora (€)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="printerLifespan" render={({ field }) => (
-                                <FormItem><FormLabel>Printer Lifespan (hours)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Vida Útil (horas)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="printerPower" render={({ field }) => (
-                                <FormItem><FormLabel>Printer Power (Watts)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Potencia (Vatios)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="electricityCostKwh" render={({ field }) => (
-                                <FormItem><FormLabel>Electricity Cost ($/kWh)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Costo Electricidad (€/kWh)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                         </InputCard>
                         
-                        <InputCard icon={Droplets} title="Filament" description="Your filament spool details.">
+                        <InputCard icon={Droplets} title="Filamento" description="Detalles de tu bobina de filamento.">
                             <FormField control={form.control} name="filamentCost" render={({ field }) => (
-                                <FormItem><FormLabel>Filament Spool Cost ($)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Costo Bobina (€)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="filamentWeight" render={({ field }) => (
-                                <FormItem><FormLabel>Filament Spool Weight (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Peso Bobina (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                         </InputCard>
 
-                        <InputCard icon={Clock} title="Print Job" description="Specifics for the item you are printing.">
+                        <InputCard icon={Clock} title="Trabajo de Impresión" description="Detalles específicos del objeto que estás imprimiendo.">
                             <FormField control={form.control} name="printTimeHours" render={({ field }) => (
-                                <FormItem><FormLabel>Printing Time (hours)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Tiempo de Impresión (horas)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="printWeightGrams" render={({ field }) => (
-                                <FormItem><FormLabel>Filament Used (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Filamento Usado (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                         </InputCard>
 
-                        <InputCard icon={Briefcase} title="Labor, Overheads & Profit" description="Your time, failure rate, and desired profit margin.">
+                        <InputCard icon={Briefcase} title="Mano de Obra, Gastos y Ganancia" description="Tu tiempo, tasa de fallos y margen de ganancia deseado.">
                             <FormField control={form.control} name="operatorHourlyRate" render={({ field }) => (
-                                <FormItem><FormLabel>Your Hourly Rate ($)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Tu Tarifa por Hora (€)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="postProcessingTimeMinutes" render={({ field }) => (
-                                <FormItem><FormLabel>Post-Processing Time (min)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Post-procesado (min)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="failureRatePercent" render={({ field }) => (
-                                <FormItem><FormLabel>Failure Rate (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Tasa de Fallos (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="desiredProfitMarginPercent" render={({ field }) => (
-                                <FormItem><FormLabel>Desired Profit Margin (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Margen de Ganancia (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                         </InputCard>
                     </div>
@@ -249,33 +255,33 @@ export default function CalculatorForm() {
                             <CardHeader>
                                 <div className="flex items-center gap-3">
                                     <BarChart3 className="w-6 h-6 text-accent" />
-                                    <CardTitle>Results</CardTitle>
+                                    <CardTitle>Resultados</CardTitle>
                                 </div>
-                                <CardDescription>Live cost and profit calculation.</CardDescription>
+                                <CardDescription>Cálculo de costos y ganancias en vivo.</CardDescription>
                             </CardHeader>
                             <CardContent className="space-y-3">
-                                <ResultRow label="Machine Cost" value={results.machineDepreciationCost} />
-                                <ResultRow label="Energy Cost" value={results.electricityUsageCost} />
-                                <ResultRow label="Filament Cost" value={results.filamentConsumedCost} />
-                                <ResultRow label="Labor Cost" value={results.operatorCost} />
-                                <ResultRow label="Failure Risk Cost" value={results.failureRiskCost} />
+                                <ResultRow label="Costo de Máquina" value={results.machineDepreciationCost} />
+                                <ResultRow label="Costo de Energía" value={results.electricityUsageCost} />
+                                <ResultRow label="Costo de Filamento" value={results.filamentConsumedCost} />
+                                <ResultRow label="Costo de Mano de Obra" value={results.operatorCost} />
+                                <ResultRow label="Costo por Fallos" value={results.failureRiskCost} />
 
                                 <Separator className="my-3"/>
 
-                                <ResultRow label="Total Cost" value={results.totalCost} isBold={true} />
-                                <ResultRow label="Profit" value={results.profitAmount} isBold={true} />
+                                <ResultRow label="Costo Total" value={results.totalCost} isBold={true} />
+                                <ResultRow label="Ganancia" value={results.profitAmount} isBold={true} />
                                 
                                 <Separator className="my-3"/>
 
                                 <div className="flex justify-between items-center text-3xl font-bold text-accent pt-2">
-                                    <span>Selling Price</span>
+                                    <span>Precio de Venta</span>
                                     <span>{formatCurrency(results.sellingPrice)}</span>
                                 </div>
                             </CardContent>
                             <CardFooter className="flex-col items-stretch space-y-2">
-                                <Button onClick={handleSaveProfile} type="button"><Save className="mr-2 h-4 w-4" /> Save Profile</Button>
-                                <Button onClick={handleLoadProfile} type="button" variant="secondary"><FolderOpen className="mr-2 h-4 w-4" /> Load Profile</Button>
-                                <Button onClick={handleReset} type="button" variant="outline"><Trash2 className="mr-2 h-4 w-4" /> Reset Defaults</Button>
+                                <Button onClick={handleSaveProfile} type="button"><Save className="mr-2 h-4 w-4" /> Guardar Perfil</Button>
+                                <Button onClick={handleLoadProfile} type="button" variant="secondary"><FolderOpen className="mr-2 h-4 w-4" /> Cargar Perfil</Button>
+                                <Button onClick={handleReset} type="button" variant="outline"><Trash2 className="mr-2 h-4 w-4" /> Restablecer</Button>
                             </CardFooter>
                         </Card>
                     </div>
@@ -286,9 +292,9 @@ export default function CalculatorForm() {
 }
 
 const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("es-ES", {
     style: "currency",
-    currency: "USD",
+    currency: "EUR",
   }).format(value || 0);
 };
 
