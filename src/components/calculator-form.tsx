@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState, useMemo } from "react"
+import { useEffect, useMemo } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -85,15 +85,22 @@ export default function CalculatorForm() {
     
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
-        defaultValues: () => {
-          try {
-            const savedProfile = localStorage.getItem(LOCAL_STORAGE_KEY);
-            return savedProfile ? calculatorSchema.parse(JSON.parse(savedProfile)) : calculatorSchema.parse({});
-          } catch {
-            return calculatorSchema.parse({});
-          }
-        }
+        defaultValues: calculatorSchema.parse({}),
     });
+    
+    const { reset } = form;
+
+    useEffect(() => {
+        try {
+            const savedProfile = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (savedProfile) {
+                const values = calculatorSchema.parse(JSON.parse(savedProfile));
+                reset(values);
+            }
+        } catch (error) {
+             console.error("Failed to load profile from local storage", error);
+        }
+    }, [reset]);
 
     const watchedValues = form.watch();
 
