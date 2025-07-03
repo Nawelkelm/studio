@@ -203,7 +203,7 @@ export default function CalculatorForm() {
                     <div className="lg:col-span-2 space-y-8">
                         <InputCard icon={Printer} title="Impresora y Energía" description="Costos relacionados con tu impresora 3D y electricidad.">
                             <FormField control={form.control} name="printerCost" render={({ field }) => (
-                                <FormItem><FormLabel>Costo de la Impresora (€)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Costo de la Impresora (ARS)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="printerLifespan" render={({ field }) => (
                                 <FormItem><FormLabel>Vida Útil (horas)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
@@ -212,13 +212,13 @@ export default function CalculatorForm() {
                                 <FormItem><FormLabel>Potencia (Vatios)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="electricityCostKwh" render={({ field }) => (
-                                <FormItem><FormLabel>Costo Electricidad (€/kWh)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Costo Electricidad (ARS/kWh)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                         </InputCard>
                         
                         <InputCard icon={Droplets} title="Filamento" description="Detalles de tu bobina de filamento.">
                             <FormField control={form.control} name="filamentCost" render={({ field }) => (
-                                <FormItem><FormLabel>Costo Bobina (€)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Costo Bobina (ARS)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="filamentWeight" render={({ field }) => (
                                 <FormItem><FormLabel>Peso Bobina (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
@@ -236,7 +236,7 @@ export default function CalculatorForm() {
 
                         <InputCard icon={Briefcase} title="Mano de Obra, Gastos y Ganancia" description="Tu tiempo, tasa de fallos y margen de ganancia deseado.">
                             <FormField control={form.control} name="operatorHourlyRate" render={({ field }) => (
-                                <FormItem><FormLabel>Tu Tarifa por Hora (€)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
+                                <FormItem><FormLabel>Tu Tarifa por Hora (ARS)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
                             )} />
                             <FormField control={form.control} name="postProcessingTimeMinutes" render={({ field }) => (
                                 <FormItem><FormLabel>Post-procesado (min)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
@@ -292,9 +292,9 @@ export default function CalculatorForm() {
 }
 
 const formatCurrency = (value: number) => {
-  return new Intl.NumberFormat("es-ES", {
+  return new Intl.NumberFormat("es-AR", {
     style: "currency",
-    currency: "EUR",
+    currency: "ARS",
   }).format(value || 0);
 };
 

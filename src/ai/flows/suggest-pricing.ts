@@ -22,7 +22,7 @@ const SuggestPricingInputSchema = z.object({
 export type SuggestPricingInput = z.infer<typeof SuggestPricingInputSchema>;
 
 const SuggestPricingOutputSchema = z.object({
-  suggestedPrice: z.string().describe('Un precio de venta sugerido para el artículo impreso en 3D.'),
+  suggestedPrice: z.string().describe('Un precio de venta sugerido para el artículo impreso en 3D, en Pesos Argentinos (ARS).'),
   reasoning: z.string().describe('El razonamiento de la IA detrás del precio sugerido.'),
 });
 
@@ -37,7 +37,8 @@ const suggestPricingPrompt = ai.definePrompt({
   input: {schema: SuggestPricingInputSchema},
   output: {schema: SuggestPricingOutputSchema},
   prompt: `Eres un asistente de precios de IA para productos impresos en 3D.
-  Basado en la descripción del producto, el material utilizado y el tiempo de impresión, sugiere un precio de venta razonable.
+  Basado en la descripción del producto, el material utilizado y el tiempo de impresión, sugiere un precio de venta razonable en Pesos Argentinos (ARS).
+  El precio debe incluir el símbolo de la moneda (ej: $1500 ARS).
   Proporciona una breve explicación de tu razonamiento detrás del precio sugerido.
 
   Descripción del Producto: {{{productDescription}}}
