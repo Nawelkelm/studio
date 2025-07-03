@@ -112,7 +112,7 @@ export default function CalculatorForm() {
 
         const doc = new jsPDF();
         const formValues = form.getValues();
-        const totalPrintTimeHours = formValues.printTimeHours + (formValues.printTimeMinutes / 60);
+        const totalPrintTimeHours = Number(formValues.printTimeHours) + (Number(formValues.printTimeMinutes) / 60);
 
         // Header
         doc.setFontSize(22);
