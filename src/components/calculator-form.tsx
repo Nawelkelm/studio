@@ -1,21 +1,11 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import {
-  Printer,
-  Droplets,
-  Clock,
-  Briefcase,
-  Save,
-  FolderOpen,
-  Trash2,
-  BarChart3,
-} from "lucide-react"
+import { BarChart3, Calculator } from "lucide-react"
 
-import { useToast } from "@/hooks/use-toast"
 import { cn } from "@/lib/utils"
 import {
   Card,
@@ -23,7 +13,6 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
-  CardFooter
 } from "@/components/ui/card"
 import {
   Form,
@@ -38,284 +27,192 @@ import { Button } from "@/components/ui/button"
 import { Separator } from "@/components/ui/separator"
 
 const calculatorSchema = z.object({
-  printerCost: z.coerce.number().min(0).default(500),
-  printerLifespan: z.coerce.number().min(1).default(4000),
-  printerPower: z.coerce.number().min(1).default(250),
-  electricityCostKwh: z.coerce.number().min(0).default(0.15),
-  filamentCost: z.coerce.number().min(1).default(25),
-  filamentWeight: z.coerce.number().min(1).default(1000),
-  printTimeHours: z.coerce.number().min(0).default(5),
-  printWeightGrams: z.coerce.number().min(0).default(100),
-  operatorHourlyRate: z.coerce.number().min(0).default(20),
-  postProcessingTimeMinutes: z.coerce.number().min(0).default(15),
-  failureRatePercent: z.coerce.number().min(0).max(100).default(5),
-  desiredProfitMarginPercent: z.coerce.number().min(0).default(50),
+  filamentCostPerKg: z.coerce.number().min(0).default(15000),
+  electricityCostKwh: z.coerce.number().min(0).default(140),
+  printerPower: z.coerce.number().min(1).default(120),
+  printerLifespan: z.coerce.number().min(1).default(4320),
+  printerCost: z.coerce.number().min(0).default(150000),
+  failureRatePercent: z.coerce.number().min(0).max(100).default(30),
+  printTimeHours: z.coerce.number().min(0).default(0),
+  printTimeMinutes: z.coerce.number().min(0).max(59).default(0),
+  printWeightGrams: z.coerce.number().min(0).default(95),
+  extraCosts: z.coerce.number().min(0).default(0),
+  profitMultiplier: z.coerce.number().min(1).default(5),
 });
 
 type CalculatorFormValues = z.infer<typeof calculatorSchema>;
 
 type CalculationResults = {
-  machineDepreciationCost: number
-  electricityUsageCost: number
-  filamentConsumedCost: number
-  operatorCost: number
-  subTotalCost: number
-  failureRiskCost: number
-  totalCost: number
-  profitAmount: number
-  sellingPrice: number
+  materialCost: number;
+  electricityCost: number;
+  depreciationCost: number;
+  errorMarginCost: number;
+  suppliesCost: number;
+  lightAndMaterialCost: number;
+  totalCostWithSupplies: number;
+  sellingPrice: number;
+  mercadoLibrePrice: number;
 };
 
-const defaultResults: CalculationResults = {
-    machineDepreciationCost: 0,
-    electricityUsageCost: 0,
-    filamentConsumedCost: 0,
-    operatorCost: 0,
-    subTotalCost: 0,
-    failureRiskCost: 0,
-    totalCost: 0,
-    profitAmount: 0,
-    sellingPrice: 0,
-};
-
-const LOCAL_STORAGE_KEY = "3d-print-profile";
+const MERCADOLIBRE_FEE_MULTIPLIER = 1.16;
 
 export default function CalculatorForm() {
-    const { toast } = useToast();
-    const [isMounted, setIsMounted] = useState(false);
-    
+    const [results, setResults] = useState<CalculationResults | null>(null);
+    const [currency, setCurrency] = useState("ARS");
+
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
         defaultValues: calculatorSchema.parse({}),
     });
     
-    const { reset } = form;
-
-    useEffect(() => {
-        setIsMounted(true);
-        try {
-            const savedProfile = localStorage.getItem(LOCAL_STORAGE_KEY);
-            if (savedProfile) {
-                const values = calculatorSchema.parse(JSON.parse(savedProfile));
-                reset(values);
-            }
-        } catch (error) {
-             console.error("Failed to load profile from local storage", error);
-        }
-    }, [reset]);
-
-    const watchedValues = form.watch();
-
-    const results = useMemo<CalculationResults>(() => {
-        const values = watchedValues;
+    const onSubmit = (values: CalculatorFormValues) => {
         const {
-            printerCost, printerLifespan, printerPower, electricityCostKwh,
-            filamentCost, filamentWeight, printTimeHours, printWeightGrams,
-            operatorHourlyRate, postProcessingTimeMinutes, failureRatePercent, desiredProfitMarginPercent,
+            filamentCostPerKg, electricityCostKwh, printerPower, printerLifespan,
+            printerCost, failureRatePercent, printTimeHours, printTimeMinutes,
+            printWeightGrams, extraCosts, profitMultiplier,
         } = values;
-
-        if (printerLifespan === 0 || filamentWeight === 0) return defaultResults;
-
-        const machineDepreciationCost = (printerCost / printerLifespan) * printTimeHours;
-        const electricityUsageCost = (printerPower / 1000) * printTimeHours * electricityCostKwh;
-        const filamentConsumedCost = (filamentCost / filamentWeight) * printWeightGrams;
-        const totalLaborHours = printTimeHours + (postProcessingTimeMinutes / 60);
-        const operatorCost = operatorHourlyRate * totalLaborHours;
-        const subTotalCost = machineDepreciationCost + electricityUsageCost + filamentConsumedCost + operatorCost;
-        const failureRiskCost = subTotalCost * (failureRatePercent / 100);
-        const totalCost = subTotalCost + failureRiskCost;
-        const profitAmount = totalCost * (desiredProfitMarginPercent / 100);
-        const sellingPrice = totalCost + profitAmount;
         
-        return {
-            machineDepreciationCost,
-            electricityUsageCost,
-            filamentConsumedCost,
-            operatorCost,
-            subTotalCost,
-            failureRiskCost,
-            totalCost,
-            profitAmount,
-            sellingPrice
-        };
-    }, [watchedValues]);
+        const totalPrintTimeHours = printTimeHours + (printTimeMinutes / 60);
 
-    const handleSaveProfile = () => {
-        try {
-            const values = form.getValues();
-            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(values));
-            toast({
-                title: "Perfil Guardado",
-                description: "La configuración de tu calculadora ha sido guardada.",
-            });
-        } catch (error) {
-            toast({
-                variant: "destructive",
-                title: "Error",
-                description: "No se pudo guardar el perfil.",
-            });
-        }
-    };
+        const materialCost = (filamentCostPerKg / 1000) * printWeightGrams;
+        const electricityCost = (printerPower / 1000) * totalPrintTimeHours * electricityCostKwh;
+        const depreciationCost = printerLifespan > 0 ? (printerCost / printerLifespan) * totalPrintTimeHours : 0;
+        
+        const baseCost = materialCost + electricityCost + depreciationCost;
+        const errorMarginCost = baseCost * (failureRatePercent / 100);
+        const suppliesCost = extraCosts;
+        
+        const totalCostWithSupplies = baseCost + errorMarginCost + suppliesCost;
+        const sellingPrice = totalCostWithSupplies * profitMultiplier;
+        const mercadoLibrePrice = sellingPrice * MERCADOLIBRE_FEE_MULTIPLIER;
 
-    const handleLoadProfile = () => {
-        try {
-            const savedProfile = localStorage.getItem(LOCAL_STORAGE_KEY);
-            if (savedProfile) {
-                const values = calculatorSchema.parse(JSON.parse(savedProfile));
-                form.reset(values);
-                toast({
-                    title: "Perfil Cargado",
-                    description: "Tu configuración ha sido restaurada.",
-                });
-            } else {
-                toast({
-                    variant: "destructive",
-                    title: "No se encontró perfil",
-                    description: "No hay un perfil guardado para cargar.",
-                });
-            }
-        } catch (error) {
-             toast({
-                variant: "destructive",
-                title: "Error",
-                description: "No se pudo cargar el perfil. Podría estar corrupto.",
-            });
-        }
-    };
-
-    const handleReset = () => {
-        form.reset(calculatorSchema.parse({}));
-        localStorage.removeItem(LOCAL_STORAGE_KEY);
-        toast({
-            title: "Restablecido",
-            description: "La calculadora ha sido restablecida a sus valores por defecto."
+        setResults({
+            materialCost,
+            electricityCost,
+            depreciationCost,
+            errorMarginCost,
+            suppliesCost,
+            lightAndMaterialCost: baseCost,
+            totalCostWithSupplies,
+            sellingPrice,
+            mercadoLibrePrice,
         });
-    }
-
-    if (!isMounted) {
-        return null;
-    }
+    };
+    
+    const CurrencyButton = ({ value, label, current, onClick, disabled = false }: { value: string, label: string, current: string, onClick: (value: string) => void, disabled?: boolean }) => (
+      <Button
+        type="button"
+        variant={current === value ? 'default' : 'outline'}
+        onClick={() => onClick(value)}
+        disabled={disabled}
+      >
+        {label}
+      </Button>
+    );
 
     return (
-        <Form {...form}>
-            <form className="space-y-8" onSubmit={(e) => e.preventDefault()}>
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
-                    <div className="lg:col-span-2 space-y-8">
-                        <InputCard icon={Printer} title="Impresora y Energía" description="Costos relacionados con tu impresora 3D y electricidad.">
-                            <FormField control={form.control} name="printerCost" render={({ field }) => (
-                                <FormItem><FormLabel>Costo de la Impresora (ARS)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="printerLifespan" render={({ field }) => (
-                                <FormItem><FormLabel>Vida Útil (horas)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="printerPower" render={({ field }) => (
-                                <FormItem><FormLabel>Potencia (Vatios)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="electricityCostKwh" render={({ field }) => (
-                                <FormItem><FormLabel>Costo Electricidad (ARS/kWh)</FormLabel><FormControl><Input type="number" step="0.01" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                        </InputCard>
-                        
-                        <InputCard icon={Droplets} title="Filamento" description="Detalles de tu bobina de filamento.">
-                            <FormField control={form.control} name="filamentCost" render={({ field }) => (
-                                <FormItem><FormLabel>Costo Bobina (ARS)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="filamentWeight" render={({ field }) => (
-                                <FormItem><FormLabel>Peso Bobina (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                        </InputCard>
+        <div className="w-full max-w-7xl mx-auto">
+             <div className="flex justify-center mb-6 gap-2">
+                <CurrencyButton value="ARS" label="ARS $" current={currency} onClick={setCurrency} />
+                <CurrencyButton value="USD" label="USD US$" current={currency} onClick={setCurrency} disabled />
+                <CurrencyButton value="EUR" label="EUR €" current={currency} onClick={setCurrency} disabled />
+            </div>
+            <Form {...form}>
+                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+                        <div className="space-y-6">
+                            <Card>
+                                <CardHeader><CardTitle className="text-xl text-accent">Gastos Fijos</CardTitle></CardHeader>
+                                <CardContent className="space-y-4">
+                                    <FormField control={form.control} name="filamentCostPerKg" render={({ field }) => ( <FormItem><FormLabel>Precio KG (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="electricityCostKwh" render={({ field }) => ( <FormItem><FormLabel>Precio Kwh (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printerPower" render={({ field }) => ( <FormItem><FormLabel>Consumo real por hora (W)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printerLifespan" render={({ field }) => ( <FormItem><FormLabel>Desgaste máquina (horas)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="printerCost" render={({ field }) => ( <FormItem><FormLabel>Precio Repuestos (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="failureRatePercent" render={({ field }) => ( <FormItem><FormLabel>% Margen de Error</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader><CardTitle className="text-xl text-accent">Pieza</CardTitle></CardHeader>
+                                <CardContent className="space-y-4">
+                                    <FormLabel>Tiempo de impresión</FormLabel>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <FormField control={form.control} name="printTimeHours" render={({ field }) => ( <FormItem><FormLabel className="text-xs text-muted-foreground">Horas</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                        <FormField control={form.control} name="printTimeMinutes" render={({ field }) => ( <FormItem><FormLabel className="text-xs text-muted-foreground">Minutos</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    </div>
+                                    <FormField control={form.control} name="printWeightGrams" render={({ field }) => ( <FormItem><FormLabel>Gramos de filamento</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField control={form.control} name="extraCosts" render={({ field }) => ( <FormItem><FormLabel>INSUMOS (ARS $)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                </CardContent>
+                            </Card>
+                            <Card>
+                                <CardHeader><CardTitle className="text-xl text-accent">Ganancia</CardTitle></CardHeader>
+                                <CardContent className="space-y-4">
+                                    <FormField control={form.control} name="profitMultiplier" render={({ field }) => ( <FormItem><FormLabel>Margen de ganancia (multiplicador)</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <div>
+                                        <FormLabel>Referencias:</FormLabel>
+                                        <p className="text-sm text-muted-foreground mt-2"> Precio Minorista → 4<br/> Precio Mayorista → 3<br/> Precio Llaveros → 5 </p>
+                                    </div>
+                                </CardContent>
+                            </Card>
+                             <div className="flex justify-center pt-4">
+                                <Button type="submit" size="lg" className="w-full md:w-auto">
+                                    <Calculator className="mr-2 h-5 w-5" /> Calcular
+                                </Button>
+                            </div>
+                        </div>
 
-                        <InputCard icon={Clock} title="Trabajo de Impresión" description="Detalles específicos del objeto que estás imprimiendo.">
-                            <FormField control={form.control} name="printTimeHours" render={({ field }) => (
-                                <FormItem><FormLabel>Tiempo de Impresión (horas)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="printWeightGrams" render={({ field }) => (
-                                <FormItem><FormLabel>Filamento Usado (g)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                        </InputCard>
-
-                        <InputCard icon={Briefcase} title="Mano de Obra, Gastos y Ganancia" description="Tu tiempo, tasa de fallos y margen de ganancia deseado.">
-                            <FormField control={form.control} name="operatorHourlyRate" render={({ field }) => (
-                                <FormItem><FormLabel>Tu Tarifa por Hora (ARS)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="postProcessingTimeMinutes" render={({ field }) => (
-                                <FormItem><FormLabel>Post-procesado (min)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="failureRatePercent" render={({ field }) => (
-                                <FormItem><FormLabel>Tasa de Fallos (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                            <FormField control={form.control} name="desiredProfitMarginPercent" render={({ field }) => (
-                                <FormItem><FormLabel>Margen de Ganancia (%)</FormLabel><FormControl><Input type="number" {...field} /></FormControl><FormMessage /></FormItem>
-                            )} />
-                        </InputCard>
-                    </div>
-
-                    <div className="lg:col-span-1 space-y-4">
-                        <Card className="sticky top-8 shadow-lg">
-                            <CardHeader>
-                                <div className="flex items-center gap-3">
-                                    <BarChart3 className="w-6 h-6 text-accent" />
-                                    <CardTitle>Resultados</CardTitle>
+                        <div className="lg:sticky top-8">
+                           {results ? (
+                               <Card className="shadow-lg">
+                                   <CardHeader>
+                                       <div className="flex items-center gap-3">
+                                           <BarChart3 className="w-6 h-6 text-accent" />
+                                           <CardTitle>Resultados</CardTitle>
+                                       </div>
+                                       <CardDescription>Desglose de costos y precio de venta.</CardDescription>
+                                   </CardHeader>
+                                   <CardContent className="space-y-2">
+                                       <ResultRow label="Precio Material" value={results.materialCost} currency={currency}/>
+                                       <ResultRow label="Precio Luz" value={results.electricityCost} currency={currency}/>
+                                       <ResultRow label="Desgaste Máquina" value={results.depreciationCost} currency={currency}/>
+                                       <ResultRow label="Margen de Error" value={results.errorMarginCost} currency={currency}/>
+                                       <ResultRow label="INSUMOS" value={results.suppliesCost} currency={currency}/>
+                                       <Separator className="my-3 bg-border/50"/>
+                                       <ResultRow label="Costo Luz y Material" value={results.lightAndMaterialCost} currency={currency}/>
+                                       <ResultRow label="Costo Total (incluye insumos)" value={results.totalCostWithSupplies} currency={currency}/>
+                                       <Separator className="my-3 bg-border/50"/>
+                                       <ResultRow label="TOTAL A COBRAR" value={results.sellingPrice} currency={currency} className="text-2xl text-primary" isBold={true}/>
+                                       <ResultRow label="PRECIO MERCADOLIBRE" value={results.mercadoLibrePrice} currency={currency} className="text-2xl text-yellow-400" isBold={true}/>
+                                   </CardContent>
+                               </Card>
+                           ) : (
+                            <Card className="shadow-lg flex items-center justify-center h-full min-h-[300px] bg-card/50 border-dashed">
+                                <div className="text-center text-muted-foreground p-4">
+                                    <p>Completa los datos y haz clic en 'Calcular'</p>
+                                    <p>para ver los resultados aquí.</p>
                                 </div>
-                                <CardDescription>Cálculo de costos y ganancias en vivo.</CardDescription>
-                            </CardHeader>
-                            <CardContent className="space-y-3">
-                                <ResultRow label="Costo de Máquina" value={results.machineDepreciationCost} />
-                                <ResultRow label="Costo de Energía" value={results.electricityUsageCost} />
-                                <ResultRow label="Costo de Filamento" value={results.filamentConsumedCost} />
-                                <ResultRow label="Costo de Mano de Obra" value={results.operatorCost} />
-                                <ResultRow label="Costo por Fallos" value={results.failureRiskCost} />
-
-                                <Separator className="my-3"/>
-
-                                <ResultRow label="Costo Total" value={results.totalCost} isBold={true} />
-                                <ResultRow label="Ganancia" value={results.profitAmount} isBold={true} />
-                                
-                                <Separator className="my-3"/>
-
-                                <div className="flex justify-between items-center text-3xl font-bold text-accent pt-2">
-                                    <span>Precio de Venta</span>
-                                    <span>{formatCurrency(results.sellingPrice)}</span>
-                                </div>
-                            </CardContent>
-                            <CardFooter className="flex-col items-stretch space-y-2">
-                                <Button onClick={handleSaveProfile} type="button"><Save className="mr-2 h-4 w-4" /> Guardar Perfil</Button>
-                                <Button onClick={handleLoadProfile} type="button" variant="secondary"><FolderOpen className="mr-2 h-4 w-4" /> Cargar Perfil</Button>
-                                <Button onClick={handleReset} type="button" variant="outline"><Trash2 className="mr-2 h-4 w-4" /> Restablecer</Button>
-                            </CardFooter>
-                        </Card>
+                            </Card>
+                           )}
+                        </div>
                     </div>
-                </div>
-            </form>
-        </Form>
+                </form>
+            </Form>
+        </div>
     );
 }
 
-const formatCurrency = (value: number) => {
+const formatCurrency = (value: number, currency: string) => {
   return new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency: "ARS",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
   }).format(value || 0);
 };
 
-const ResultRow = ({ label, value, isBold = false }: { label: string, value: number, isBold?: boolean }) => (
-    <div className={cn("flex justify-between items-center text-sm transition-colors", isBold && "font-bold text-base mt-1")}>
-        <span className="text-muted-foreground">{label}</span>
-        <span className="font-mono text-foreground tracking-tight">{formatCurrency(value)}</span>
+const ResultRow = ({ label, value, currency, isBold = false, className = "" }: { label: string, value: number, currency: string, isBold?: boolean, className?: string }) => (
+    <div className={cn("flex justify-between items-baseline", isBold ? "font-bold" : "", className)}>
+        <p className={cn("text-sm", isBold ? "" : "text-muted-foreground")}>{label}</p>
+        <p className="font-mono tracking-tight">{formatCurrency(value, currency)}</p>
     </div>
-);
-
-const InputCard = ({ icon: Icon, title, description, children }: { icon: React.ElementType, title: string, description: string, children: React.ReactNode }) => (
-    <Card className="overflow-hidden">
-        <CardHeader>
-            <div className="flex items-center gap-3">
-                <Icon className="w-6 h-6 text-accent" />
-                <CardTitle>{title}</CardTitle>
-            </div>
-            <CardDescription>{description}</CardDescription>
-        </CardHeader>
-        <CardContent className="grid sm:grid-cols-2 gap-4">
-            {children}
-        </CardContent>
-    </Card>
 );
