@@ -208,7 +208,25 @@ export default function CalculatorForm() {
                             <Card>
                                 <CardHeader><CardTitle className="text-xl text-primary">Ganancia</CardTitle></CardHeader>
                                 <CardContent className="space-y-4">
-                                    <FormField control={form.control} name="profitMultiplier" render={({ field }) => ( <FormItem><FormLabel>Multiplicador de Ganancia</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
+                                    <FormField
+                                        control={form.control}
+                                        name="profitMultiplier"
+                                        render={({ field }) => (
+                                            <FormItem>
+                                                <FormLabel>Multiplicador de Ganancia</FormLabel>
+                                                <FormControl>
+                                                    <Input type="number" step="any" {...field} />
+                                                </FormControl>
+                                                <div className="text-xs text-muted-foreground space-y-1 pt-2">
+                                                  <p className="font-bold">Referencias:</p>
+                                                  <p>Precio Minorista → 4</p>
+                                                  <p>Precio Mayorista → 3</p>
+                                                  <p>Precio Llaveros → 5</p>
+                                                </div>
+                                                <FormMessage />
+                                            </FormItem>
+                                        )}
+                                    />
                                 </CardContent>
                             </Card>
                              <div className="flex justify-center pt-4">
