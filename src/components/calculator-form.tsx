@@ -4,8 +4,7 @@ import { useState } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import jsPDF from 'jspdf'
-import 'jspdf-autotable'
+import type jsPDF from 'jspdf'
 import { BarChart3, Calculator, FileText } from "lucide-react"
 
 import { cn } from "@/lib/utils"
@@ -107,8 +106,11 @@ export default function CalculatorForm() {
         });
     };
     
-    const handleExportToPdf = () => {
+    const handleExportToPdf = async () => {
         if (!results || !form.getValues() || !clientName.trim()) return;
+
+        const { default: jsPDF } = await import('jspdf');
+        await import('jspdf-autotable');
 
         const doc = new jsPDF();
         const formValues = form.getValues();
