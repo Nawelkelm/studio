@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -63,6 +63,7 @@ type CalculationResults = {
 };
 
 const MERCADOLIBRE_FEE_MULTIPLIER = 1.16;
+const LOCAL_STORAGE_KEY = "3d-calculator-form-data";
 
 export default function CalculatorForm() {
     const [results, setResults] = useState<CalculationResults | null>(null);
@@ -72,6 +73,26 @@ export default function CalculatorForm() {
         resolver: zodResolver(calculatorSchema),
         defaultValues: calculatorSchema.parse({}),
     });
+
+    useEffect(() => {
+        const savedData = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (savedData) {
+            try {
+                const parsedData = JSON.parse(savedData);
+                form.reset(parsedData);
+            } catch (error) {
+                console.error("Error al cargar los datos desde localStorage", error);
+                localStorage.removeItem(LOCAL_STORAGE_KEY);
+            }
+        }
+    }, [form]);
+
+    useEffect(() => {
+        const subscription = form.watch((value) => {
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(value));
+        });
+        return () => subscription.unsubscribe();
+    }, [form.watch]);
     
     const onSubmit = (values: CalculatorFormValues) => {
         const {
