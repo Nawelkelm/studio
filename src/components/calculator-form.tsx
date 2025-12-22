@@ -71,22 +71,20 @@ export default function CalculatorForm() {
 
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
-        defaultValues: calculatorSchema.parse({}),
-    });
-
-    useEffect(() => {
-        const savedData = localStorage.getItem(LOCAL_STORAGE_KEY);
-        if (savedData) {
-            try {
-                const parsedData = JSON.parse(savedData);
-                form.reset(parsedData);
-            } catch (error) {
-                console.error("Error al cargar los datos desde localStorage", error);
-                localStorage.removeItem(LOCAL_STORAGE_KEY);
+        defaultValues: () => {
+            const savedData = localStorage.getItem(LOCAL_STORAGE_KEY);
+            if (savedData) {
+                try {
+                    return JSON.parse(savedData);
+                } catch (error) {
+                    console.error("Error al cargar los datos desde localStorage", error);
+                    localStorage.removeItem(LOCAL_STORAGE_KEY);
+                }
             }
+            return calculatorSchema.parse({});
         }
-    }, [form]);
-
+    });
+    
     useEffect(() => {
         const subscription = form.watch((value) => {
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(value));
@@ -139,10 +137,7 @@ export default function CalculatorForm() {
         // Header
         doc.setFontSize(22);
         doc.setFont("helvetica", "bold");
-        doc.text("FACTURA", 14, 22);
-        doc.setFontSize(10);
-        doc.setFont("helvetica", "normal");
-        doc.text("TIPO C", 15, 28);
+        doc.text("COTIZACIÓN", 14, 22);
         
         doc.setFontSize(12);
         doc.text("Mi Emprendimiento 3D", 140, 22);
@@ -160,20 +155,17 @@ export default function CalculatorForm() {
         // Robustly parse time values for display
         const printHours = parseFloat(String(formValues.printTimeHours || "0"));
         const printMinutes = parseFloat(String(formValues.printTimeMinutes || "0"));
-        const electricityDetail = `${printHours} hs ${printMinutes} min @ ${formValues.printerPower}W`;
-
+        const timeDetail = `${printHours} hs y ${printMinutes} min`;
+        const materialDetail = `${formValues.printWeightGrams}g en ${formValues.materialUsed}`;
+        
         // Table
         const tableData = [
-            ['Costo de Material', `${formValues.printWeightGrams}g de ${formValues.materialUsed}`, formatCurrency(results.materialCost)],
-            ['Costo de Electricidad', electricityDetail, formatCurrency(results.electricityCost)],
-            ['Amortización de Máquina', `Vida útil: ${formValues.printerLifespan} hs`, formatCurrency(results.depreciationCost)],
-            ['Margen de Error', `${formValues.failureRatePercent}%`, formatCurrency(results.errorMarginCost)],
-            ['Costos Adicionales (Insumos)', '', formatCurrency(results.suppliesCost)],
+            ['Servicio de Impresión 3D', `Tiempo: ${timeDetail} | Material: ${materialDetail}`, formatCurrency(results.sellingPrice)]
         ];
 
         doc.autoTable({
             startY: 60,
-            head: [['Descripción', 'Detalle', 'Subtotal']],
+            head: [['Descripción', 'Detalle', 'Precio']],
             body: tableData,
             theme: 'striped',
             headStyles: { fillColor: [88, 28, 135] }, // Violet color
@@ -182,12 +174,8 @@ export default function CalculatorForm() {
         const finalY = (doc as any).lastAutoTable.finalY || 100;
 
         // Totals
-        doc.setFontSize(12);
-        doc.setFont("helvetica", "bold");
-        doc.text("Costo de Producción:", 140, finalY + 15, { align: 'right' });
-        doc.text(formatCurrency(results.totalCostWithSupplies), 196, finalY + 15, { align: 'right' });
-
         doc.setFontSize(14);
+        doc.setFont("helvetica", "bold");
         doc.text("TOTAL:", 140, finalY + 25, { align: 'right' });
         doc.text(formatCurrency(results.sellingPrice), 196, finalY + 25, { align: 'right' });
         
@@ -195,9 +183,9 @@ export default function CalculatorForm() {
         const pageHeight = doc.internal.pageSize.height;
         doc.line(14, pageHeight - 20, 196, pageHeight - 20);
         doc.setFontSize(8);
-        doc.text("Documento no válido como comprobante fiscal.", 105, pageHeight - 15, { align: 'center' });
+        doc.text("Documento no válido como comprobante fiscal. Válido por 7 días.", 105, pageHeight - 15, { align: 'center' });
         
-        doc.save(`Factura-${clientName.replace(/\s/g, '_') || 'Cliente'}.pdf`);
+        doc.save(`Cotizacion-${clientName.replace(/\s/g, '_') || 'Cliente'}.pdf`);
     };
 
     return (
@@ -290,13 +278,13 @@ export default function CalculatorForm() {
                                           id="clientName"
                                           value={clientName}
                                           onChange={(e) => setClientName(e.target.value)}
-                                          placeholder="Nombre del cliente para la factura"
+                                          placeholder="Nombre del cliente para la cotización"
                                       />
                                       <Button
                                           onClick={handleExportToPdf}
                                           disabled={!results || !clientName.trim()}
                                       >
-                                          <FileText className="mr-2 h-5 w-5" /> Exportar a Factura (PDF)
+                                          <FileText className="mr-2 h-5 w-5" /> Exportar a Cotización (PDF)
                                       </Button>
                                   </CardFooter>
                                </Card>
@@ -330,3 +318,5 @@ const ResultRow = ({ label, value, isBold = false, className = "" }: { label: st
         <p className="font-mono tracking-tight">{formatCurrency(value)}</p>
     </div>
 );
+
+    
