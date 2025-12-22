@@ -71,26 +71,30 @@ export default function CalculatorForm() {
 
     const form = useForm<CalculatorFormValues>({
         resolver: zodResolver(calculatorSchema),
-        defaultValues: () => {
-            const savedData = localStorage.getItem(LOCAL_STORAGE_KEY);
-            if (savedData) {
-                try {
-                    return JSON.parse(savedData);
-                } catch (error) {
-                    console.error("Error al cargar los datos desde localStorage", error);
-                    localStorage.removeItem(LOCAL_STORAGE_KEY);
-                }
-            }
-            return calculatorSchema.parse({});
-        }
+        defaultValues: calculatorSchema.parse({}), // Initialize with default schema values
     });
+
+    // Load from localStorage on client side
+    useEffect(() => {
+        const savedData = localStorage.getItem(LOCAL_STORAGE_KEY);
+        if (savedData) {
+            try {
+                const parsedData = JSON.parse(savedData);
+                form.reset(parsedData);
+            } catch (error) {
+                console.error("Error al cargar los datos desde localStorage", error);
+                localStorage.removeItem(LOCAL_STORAGE_KEY);
+            }
+        }
+    }, [form]);
     
+    // Save to localStorage on change
     useEffect(() => {
         const subscription = form.watch((value) => {
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(value));
         });
         return () => subscription.unsubscribe();
-    }, [form.watch]);
+    }, [form]);
     
     const onSubmit = (values: CalculatorFormValues) => {
         const {
@@ -318,5 +322,7 @@ const ResultRow = ({ label, value, isBold = false, className = "" }: { label: st
         <p className="font-mono tracking-tight">{formatCurrency(value)}</p>
     </div>
 );
+
+    
 
     
