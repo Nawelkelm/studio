@@ -1,4 +1,7 @@
 import CalculatorForm from "@/components/calculator-form"
+import AiPricingAssistant from "@/components/ai-pricing-assistant"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Calculator, Sparkles } from "lucide-react"
 
 export default function Home() {
   return (
@@ -13,8 +16,25 @@ export default function Home() {
           </p>
         </div>
       </div>
-      
-      <CalculatorForm />
+
+      <Tabs defaultValue="calculator" className="w-full max-w-7xl">
+        <TabsList className="grid w-full max-w-md mx-auto grid-cols-2 mb-8">
+          <TabsTrigger value="calculator" className="gap-2">
+            <Calculator className="h-4 w-4" /> Calculadora
+          </TabsTrigger>
+          <TabsTrigger value="ai" className="gap-2">
+            <Sparkles className="h-4 w-4" /> Asistente IA
+          </TabsTrigger>
+        </TabsList>
+        <TabsContent value="calculator">
+          <CalculatorForm />
+        </TabsContent>
+        <TabsContent value="ai">
+          <div className="max-w-2xl mx-auto">
+            <AiPricingAssistant />
+          </div>
+        </TabsContent>
+      </Tabs>
     </main>
   );
 }

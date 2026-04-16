@@ -5,6 +5,17 @@ import { Toaster } from "@/components/ui/toaster"
 export const metadata: Metadata = {
   title: 'Beneficio Impresión 3D',
   description: 'Calculadora de costos y beneficios para impresión 3D, con sugerencias de precios por IA.',
+  openGraph: {
+    title: 'Calculadora de Costos 3D',
+    description: 'Calculá el costo real de tus impresiones 3D. Material, electricidad, amortización y ganancia en un solo lugar.',
+    type: 'website',
+    locale: 'es_AR',
+  },
+  twitter: {
+    card: 'summary_large_image',
+    title: 'Calculadora de Costos 3D',
+    description: 'Calculá el costo real de tus impresiones 3D.',
+  },
 };
 
 export default function RootLayout({

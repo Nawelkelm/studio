@@ -38,40 +38,7 @@
     --sidebar-border: 260 20% 25%;
     --sidebar-ring: 262 80% 58%;
   }
-  .dark {
-    --background: 260 20% 11%;
-    --foreground: 0 0% 98%;
-    --card: 260 20% 15%;
-    --card-foreground: 0 0% 98%;
-    --popover: 260 20% 11%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 262 80% 68%;
-    --primary-foreground: 262 80% 10%;
-    --secondary: 260 20% 20%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 260 20% 20%;
-    --muted-foreground: 0 0% 63.9%;
-    --accent: 262 80% 58%;
-    --accent-foreground: 0 0% 98%;
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 0 0% 98%;
-    --border: 260 20% 25%;
-    --input: 260 20% 25%;
-    --ring: 262 80% 58%;
-    --chart-1: 262 70% 50%;
-    --chart-2: 250 60% 45%;
-    --chart-3: 270 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 290 75% 55%;
-    --sidebar-background: 260 20% 15%;
-    --sidebar-foreground: 0 0% 95.9%;
-    --sidebar-primary: 262 80% 58%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 260 20% 25%;
-    --sidebar-accent-foreground: 0 0% 95.9%;
-    --sidebar-border: 260 20% 25%;
-    --sidebar-ring: 262 80% 58%;
-  }
+
 }
 
 @layer base {
