@@ -4,7 +4,6 @@ import { useState } from "react"
 import { useForm, type SubmitHandler } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
-import { suggestPricing, type SuggestPricingOutput } from "@/ai/flows/suggest-pricing"
 
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
@@ -23,9 +22,14 @@ const aiPricingSchema = z.object({
 
 type AiPricingFormValues = z.infer<typeof aiPricingSchema>
 
+type SuggestPricingResult = {
+  suggestedPrice: string;
+  reasoning: string;
+};
+
 export default function AiPricingAssistant() {
   const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<SuggestPricingOutput | null>(null)
+  const [result, setResult] = useState<SuggestPricingResult | null>(null)
   const { toast } = useToast()
 
   const form = useForm<AiPricingFormValues>({
@@ -41,10 +45,16 @@ export default function AiPricingAssistant() {
     setIsLoading(true)
     setResult(null)
     try {
-      const response = await suggestPricing({
-        ...data,
-        printingTime: `${data.printingTime} horas`,
+      const res = await fetch("/api/suggest-pricing", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          ...data,
+          printingTime: `${data.printingTime} horas`,
+        }),
       })
+      if (!res.ok) throw new Error("Error del servidor")
+      const response = await res.json()
       setResult(response)
     } catch (error) {
       console.error("AI Pricing Assistant Error:", error)
