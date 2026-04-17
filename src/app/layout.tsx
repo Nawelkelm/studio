@@ -1,6 +1,7 @@
 import type {Metadata} from 'next';
 import './globals.css';
 import { Toaster } from "@/components/ui/toaster"
+import { AuthProvider } from "@/components/auth-provider"
 
 export const metadata: Metadata = {
   title: 'Doji Print | Calculadora de Costos 3D',
@@ -32,8 +33,10 @@ export default function RootLayout({
         <link rel="icon" href="/logo.png" type="image/png" />
       </head>
       <body className="font-body antialiased">
-        {children}
-        <Toaster />
+        <AuthProvider>
+          {children}
+          <Toaster />
+        </AuthProvider>
       </body>
     </html>
   );
