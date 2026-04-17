@@ -53,15 +53,19 @@ export default function AiPricingAssistant() {
           printingTime: `${data.printingTime} horas`,
         }),
       })
-      if (!res.ok) throw new Error("Error del servidor")
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
+        throw new Error(errorData.error || `Error del servidor (${res.status})`)
+      }
       const response = await res.json()
       setResult(response)
     } catch (error) {
       console.error("AI Pricing Assistant Error:", error)
+      const msg = error instanceof Error ? error.message : "Error desconocido"
       toast({
         variant: "destructive",
         title: "Error",
-        description: "No se pudo obtener una sugerencia de la IA. Por favor, inténtalo de nuevo.",
+        description: msg,
       })
     } finally {
       setIsLoading(false)
