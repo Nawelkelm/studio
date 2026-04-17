@@ -1,11 +1,11 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback } from "react"
+import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
 import type jsPDF from 'jspdf'
-import { BarChart3, Calculator, FileText, RotateCcw, Settings, PieChart as PieChartIcon, Package, Printer, Save, Loader2 } from "lucide-react"
+import { BarChart3, Calculator, FileText, RotateCcw, Settings, PieChart as PieChartIcon, Package, Printer, Save, Loader2, CloudUpload } from "lucide-react"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from "recharts"
 
 import { cn } from "@/lib/utils"
@@ -62,8 +62,11 @@ const BUSINESS_INFO_KEY = "3d-calculator-business-info";
 const CHART_COLORS = ["hsl(252,78%,65%)","hsl(240,60%,50%)","hsl(268,80%,58%)","hsl(278,65%,62%)","hsl(200,70%,55%)"];
 const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" };
 
-function getStorageKey(printerId: string | null) {
-  return printerId ? `3d-calc-${printerId}` : "3d-calc-default";
+// Fields that are synced to Supabase printers table (shared across all users)
+const PRESET_FIELDS = ['filamentCostPerKg', 'electricityCostKwh', 'printerPower', 'printerLifespan', 'printerCost', 'failureRatePercent'] as const;
+
+function getPieceStorageKey(printerId: string | null) {
+  return printerId ? `3d-piece-${printerId}` : "3d-piece-default";
 }
 
 export default function CalculatorForm() {
@@ -75,6 +78,8 @@ export default function CalculatorForm() {
     const [printers, setPrinters] = useState<PrinterType[]>([]);
     const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
     const [savingQuotation, setSavingQuotation] = useState(false);
+    const [syncingPresets, setSyncingPresets] = useState(false);
+    const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
     const { toast } = useToast();
 
     const form = useForm<CalculatorFormValues>({
@@ -94,34 +99,83 @@ export default function CalculatorForm() {
         });
     }, []);
 
-    // Load form data when printer changes
+    // Load form data when printer changes: presets from Supabase, piece data from localStorage
     useEffect(() => {
-        const key = getStorageKey(selectedPrinterId);
-        const savedData = localStorage.getItem(key);
-        if (savedData) {
-            try { form.reset(JSON.parse(savedData)); } catch { localStorage.removeItem(key); }
-        } else if (selectedPrinterId) {
-            const printer = printers.find(p => p.id === selectedPrinterId);
-            if (printer) {
-                form.reset({
-                    ...calculatorSchema.parse({}),
-                    filamentCostPerKg: printer.filament_cost_per_kg,
-                    electricityCostKwh: printer.electricity_cost_kwh,
-                    printerPower: printer.printer_power,
-                    printerLifespan: printer.printer_lifespan,
-                    printerCost: printer.printer_cost,
-                    failureRatePercent: printer.failure_rate_percent,
-                });
-            }
+        if (!selectedPrinterId) return;
+        const printer = printers.find(p => p.id === selectedPrinterId);
+        if (!printer) return;
+
+        // Load piece-specific data from localStorage (time, weight, quantity, extras, material, multiplier)
+        const pieceKey = getPieceStorageKey(selectedPrinterId);
+        const savedPiece = localStorage.getItem(pieceKey);
+        let pieceData: Partial<CalculatorFormValues> = {};
+        if (savedPiece) {
+            try { pieceData = JSON.parse(savedPiece); } catch { localStorage.removeItem(pieceKey); }
         }
+
+        // Always load preset fields from Supabase (shared), piece fields from localStorage (local)
+        form.reset({
+            ...calculatorSchema.parse({}),
+            // Preset fields from Supabase (shared for all users)
+            filamentCostPerKg: printer.filament_cost_per_kg,
+            electricityCostKwh: printer.electricity_cost_kwh,
+            printerPower: printer.printer_power,
+            printerLifespan: printer.printer_lifespan,
+            printerCost: printer.printer_cost,
+            failureRatePercent: printer.failure_rate_percent,
+            // Piece fields from localStorage (per-user)
+            ...(pieceData.printTimeHours !== undefined && { printTimeHours: pieceData.printTimeHours }),
+            ...(pieceData.printTimeMinutes !== undefined && { printTimeMinutes: pieceData.printTimeMinutes }),
+            ...(pieceData.printWeightGrams !== undefined && { printWeightGrams: pieceData.printWeightGrams }),
+            ...(pieceData.quantity !== undefined && { quantity: pieceData.quantity }),
+            ...(pieceData.extraCosts !== undefined && { extraCosts: pieceData.extraCosts }),
+            ...(pieceData.materialUsed !== undefined && { materialUsed: pieceData.materialUsed }),
+            ...(pieceData.profitMultiplier !== undefined && { profitMultiplier: pieceData.profitMultiplier }),
+        });
         setResults(null);
     }, [selectedPrinterId, printers, form]);
 
-    // Persist form per printer
+    // Persist piece-specific data to localStorage + sync preset changes to Supabase
     useEffect(() => {
-        const sub = form.watch((v) => localStorage.setItem(getStorageKey(selectedPrinterId), JSON.stringify(v)));
-        return () => sub.unsubscribe();
-    }, [form, selectedPrinterId]);
+        const sub = form.watch((v) => {
+            // Save piece-specific fields to localStorage
+            const pieceData = {
+                printTimeHours: v.printTimeHours, printTimeMinutes: v.printTimeMinutes,
+                printWeightGrams: v.printWeightGrams, quantity: v.quantity,
+                extraCosts: v.extraCosts, materialUsed: v.materialUsed, profitMultiplier: v.profitMultiplier,
+            };
+            localStorage.setItem(getPieceStorageKey(selectedPrinterId), JSON.stringify(pieceData));
+
+            // Debounced sync of preset fields to Supabase (2s delay)
+            if (selectedPrinterId) {
+                if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
+                syncTimerRef.current = setTimeout(() => {
+                    const printer = printers.find(p => p.id === selectedPrinterId);
+                    if (!printer) return;
+                    const updates: Record<string, number> = {};
+                    if (v.filamentCostPerKg !== undefined && v.filamentCostPerKg !== printer.filament_cost_per_kg) updates.filament_cost_per_kg = v.filamentCostPerKg;
+                    if (v.electricityCostKwh !== undefined && v.electricityCostKwh !== printer.electricity_cost_kwh) updates.electricity_cost_kwh = v.electricityCostKwh;
+                    if (v.printerPower !== undefined && v.printerPower !== printer.printer_power) updates.printer_power = v.printerPower;
+                    if (v.printerLifespan !== undefined && v.printerLifespan !== printer.printer_lifespan) updates.printer_lifespan = v.printerLifespan;
+                    if (v.printerCost !== undefined && v.printerCost !== printer.printer_cost) updates.printer_cost = v.printerCost;
+                    if (v.failureRatePercent !== undefined && v.failureRatePercent !== printer.failure_rate_percent) updates.failure_rate_percent = v.failureRatePercent;
+
+                    if (Object.keys(updates).length > 0) {
+                        setSyncingPresets(true);
+                        supabase.from("printers").update({ ...updates, updated_at: new Date().toISOString() })
+                            .eq("id", selectedPrinterId).then(({ error }) => {
+                                setSyncingPresets(false);
+                                if (!error) {
+                                    // Update local printers state to reflect the change
+                                    setPrinters(prev => prev.map(p => p.id === selectedPrinterId ? { ...p, ...updates } as PrinterType : p));
+                                }
+                            });
+                    }
+                }, 2000);
+            }
+        });
+        return () => { sub.unsubscribe(); if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
+    }, [form, selectedPrinterId, printers]);
 
     // Load business info
     useEffect(() => {
@@ -149,7 +203,7 @@ export default function CalculatorForm() {
             form.reset({ ...calculatorSchema.parse({}), filamentCostPerKg: printer.filament_cost_per_kg, electricityCostKwh: printer.electricity_cost_kwh, printerPower: printer.printer_power, printerLifespan: printer.printer_lifespan, printerCost: printer.printer_cost, failureRatePercent: printer.failure_rate_percent });
         } else { form.reset(calculatorSchema.parse({})); }
         setResults(null);
-        localStorage.removeItem(getStorageKey(selectedPrinterId));
+        localStorage.removeItem(getPieceStorageKey(selectedPrinterId));
         toast({ title: "Formulario reseteado" });
     };
 
@@ -281,7 +335,13 @@ export default function CalculatorForm() {
                                 </CardContent>
                             </Card>
                             <Card>
-                                <CardHeader><CardTitle className="text-xl text-primary">Gastos Fijos</CardTitle><CardDescription>Costos de {selectedPrinter?.name || "tu impresora"} y servicios</CardDescription></CardHeader>
+                                <CardHeader>
+                                    <div className="flex items-center justify-between">
+                                        <CardTitle className="text-xl text-primary">Gastos Fijos</CardTitle>
+                                        {syncingPresets && <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><CloudUpload className="h-3.5 w-3.5 animate-pulse" /> Sincronizando...</span>}
+                                    </div>
+                                    <CardDescription>Costos de {selectedPrinter?.name || "tu impresora"} y servicios — compartidos para todos los usuarios</CardDescription>
+                                </CardHeader>
                                 <CardContent className="space-y-4">
                                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                                       <FormField control={form.control} name="filamentCostPerKg" render={({ field }) => ( <FormItem><FormLabel>Costo Filamento (kg)</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
