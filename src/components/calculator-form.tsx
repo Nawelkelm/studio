@@ -92,15 +92,15 @@ const LOCAL_STORAGE_KEY = "3d-calculator-form-data";
 const BUSINESS_INFO_KEY = "3d-calculator-business-info";
 
 const CHART_COLORS = [
-  "hsl(262, 80%, 68%)",
-  "hsl(250, 60%, 55%)",
-  "hsl(270, 80%, 60%)",
-  "hsl(280, 65%, 65%)",
+  "hsl(252, 78%, 65%)",
+  "hsl(240, 60%, 50%)",
+  "hsl(268, 80%, 58%)",
+  "hsl(278, 65%, 62%)",
   "hsl(200, 70%, 55%)",
 ];
 
 const DEFAULT_BUSINESS_INFO: BusinessInfo = {
-  businessName: "Mi Emprendimiento 3D",
+  businessName: "Doji Print - Impresiones 3D",
   cuit: "",
   address: "",
   phone: "",
@@ -219,14 +219,33 @@ export default function CalculatorForm() {
         const doc = new jsPDF();
         const formValues = form.getValues();
 
+        // Add logo to PDF
+        try {
+          const logoRes = await fetch('/logo.png');
+          const logoBlob = await logoRes.blob();
+          const logoBase64 = await new Promise<string>((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve(reader.result as string);
+            reader.readAsDataURL(logoBlob);
+          });
+          doc.addImage(logoBase64, 'PNG', 14, 8, 28, 28);
+        } catch { /* logo not available, skip */ }
+
         doc.setFontSize(22);
         doc.setFont("helvetica", "bold");
-        doc.text("COTIZACIÓN", 14, 22);
+        doc.text("COTIZACIÓN", 48, 22);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        doc.setTextColor(100, 80, 160);
+        doc.text("Doji Print - Impresiones 3D", 48, 30);
+        doc.setTextColor(0, 0, 0);
         
-        doc.setFontSize(12);
-        doc.text(businessInfo.businessName, 140, 22);
-        doc.setFontSize(10);
-        let infoY = 28;
+        doc.setFontSize(11);
+        doc.setFont("helvetica", "bold");
+        doc.text(businessInfo.businessName, 140, 18);
+        doc.setFontSize(9);
+        doc.setFont("helvetica", "normal");
+        let infoY = 24;
         if (businessInfo.cuit) { doc.text(`CUIT: ${businessInfo.cuit}`, 140, infoY); infoY += 5; }
         if (businessInfo.address) { doc.text(businessInfo.address, 140, infoY); infoY += 5; }
         if (businessInfo.phone) { doc.text(`Tel: ${businessInfo.phone}`, 140, infoY); }
@@ -260,7 +279,7 @@ export default function CalculatorForm() {
             head: [['Concepto', 'Detalle', 'Monto']],
             body: tableData,
             theme: 'striped',
-            headStyles: { fillColor: [88, 28, 135] },
+            headStyles: { fillColor: [30, 16, 84] },
         });
 
         const finalY = (doc as any).lastAutoTable.finalY || 100;
@@ -497,7 +516,7 @@ export default function CalculatorForm() {
                                                    </Pie>
                                                    <RechartsTooltip
                                                        formatter={(value: number) => formatCurrency(value)}
-                                                       contentStyle={{ backgroundColor: 'hsl(260, 20%, 15%)', border: '1px solid hsl(260, 20%, 25%)', borderRadius: '8px' }}
+                                                       contentStyle={{ backgroundColor: 'hsl(252, 45%, 13%)', border: '1px solid hsl(252, 30%, 22%)', borderRadius: '8px' }}
                                                        itemStyle={{ color: 'hsl(0, 0%, 98%)' }}
                                                    />
                                                    <Legend />
