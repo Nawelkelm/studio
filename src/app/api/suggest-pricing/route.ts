@@ -35,7 +35,7 @@ Tiempo de Impresión: ${printingTime}
 Responde SOLO con un JSON válido con esta estructura exacta (sin markdown, sin backticks):
 {"suggestedPrice": "$XXXX ARS", "reasoning": "tu explicación aquí"}`;
 
-    const models = ["gemini-2.0-flash", "gemini-1.5-flash"];
+    const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
     let lastError = "";
 
     for (const model of models) {
