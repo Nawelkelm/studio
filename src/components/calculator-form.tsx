@@ -207,7 +207,13 @@ export default function CalculatorForm() {
 
     const saveQuotationToDb = useCallback(async () => {
         if (!results || !clientName.trim() || !user) return false;
-        const v = form.getValues();
+        // getValues() yields raw input strings for edited fields: send validated numbers to the DB
+        const parsedValues = calculatorSchema.safeParse(form.getValues());
+        if (!parsedValues.success) {
+            toast({ variant: "destructive", title: "Datos inválidos", description: "Revisá los campos del formulario y volvé a calcular." });
+            return false;
+        }
+        const v = parsedValues.data;
         // Same client + printer + inputs + result => already registered; don't insert a duplicate row
         const signature = JSON.stringify([clientName.trim(), selectedPrinterId, v, results.sellingPrice]);
         if (lastSavedQuotationRef.current === signature) {
@@ -241,7 +247,11 @@ export default function CalculatorForm() {
             notes: JSON.stringify(internalBreakdown),
         });
         setSavingQuotation(false);
-        if (error) { toast({ variant: "destructive", title: "Error", description: "No se pudo guardar la cotización." }); return false; }
+        if (error) {
+            console.error("Error al guardar la cotización:", error);
+            toast({ variant: "destructive", title: "No se pudo guardar la cotización", description: error.message });
+            return false;
+        }
         lastSavedQuotationRef.current = signature;
         toast({ title: "Cotización guardada", description: "Se registró en el historial." });
         return true;
