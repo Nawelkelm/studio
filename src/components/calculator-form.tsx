@@ -251,7 +251,7 @@ export default function CalculatorForm() {
         if (!results || !clientName.trim()) return;
         await saveQuotationToDb();
         const { default: jsPDF } = await import('jspdf');
-        await import('jspdf-autotable');
+        const { autoTable } = await import('jspdf-autotable');
         const doc = new jsPDF();
 
         try {
@@ -282,7 +282,7 @@ export default function CalculatorForm() {
             tableData.push(['Precio por unidad', '', formatCurrency(results.sellingPricePerUnit)]);
         }
 
-        doc.autoTable({ startY, head: [['Servicio', 'Detalle', 'Total']], body: tableData, theme: 'striped', headStyles: { fillColor: [30, 16, 84] } });
+        autoTable(doc, { startY, head: [['Servicio', 'Detalle', 'Total']], body: tableData, theme: 'striped', headStyles: { fillColor: [30, 16, 84] } });
         const finalY = doc.lastAutoTable.finalY || 100;
         doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text("TOTAL SERVICIO:", 140, finalY + 20, { align: 'right' }); doc.text(formatCurrency(results.sellingPrice), 196, finalY + 20, { align: 'right' });
         doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.text("Cotización comercial: no incluye desglose de costos internos.", 14, finalY + 28);

@@ -87,7 +87,7 @@ export default function QuotationRegistry() {
 
   const handleExportRegistryPdf = async () => {
     const { default: jsPDF } = await import("jspdf");
-    await import("jspdf-autotable");
+    const { autoTable } = await import("jspdf-autotable");
 
     const doc = new jsPDF({ orientation: "landscape" });
 
@@ -129,7 +129,7 @@ export default function QuotationRegistry() {
       q.status.charAt(0).toUpperCase() + q.status.slice(1),
     ]);
 
-    doc.autoTable({
+    autoTable(doc, {
       startY: 34,
       head: [["Fecha", "Cliente", "Impresora", "Material", "Cant.", "Costo", "Precio", "Responsable", "Estado"]],
       body: tableData,
