@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import { buildPricingPrompt, parsePricingRequest } from "@/lib/pricing-prompt";
 
 export const runtime = "edge";
 
-const MAX_DESCRIPTION_LENGTH = 500;
-const MAX_FIELD_LENGTH = 50;
 const RATE_LIMIT_MAX_REQUESTS = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
@@ -65,40 +64,12 @@ export async function POST(req: NextRequest) {
     }
 
     const body = await req.json().catch(() => null);
-    const { productDescription, materialUsed, printingTime } = body ?? {};
-
-    if (
-      typeof productDescription !== "string" || !productDescription.trim() ||
-      typeof materialUsed !== "string" || !materialUsed.trim() ||
-      typeof printingTime !== "string" || !printingTime.trim()
-    ) {
-      return NextResponse.json(
-        { error: "Faltan campos requeridos" },
-        { status: 400 }
-      );
-    }
-    if (
-      productDescription.length > MAX_DESCRIPTION_LENGTH ||
-      materialUsed.length > MAX_FIELD_LENGTH ||
-      printingTime.length > MAX_FIELD_LENGTH
-    ) {
-      return NextResponse.json(
-        { error: "Alguno de los campos supera el largo permitido" },
-        { status: 400 }
-      );
+    const parsed = parsePricingRequest(body);
+    if (!parsed.ok) {
+      return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
 
-    const prompt = `Eres un asistente de precios de IA para productos impresos en 3D.
-Basado en la descripción del producto, el material utilizado y el tiempo de impresión, sugiere un precio de venta razonable en Pesos Argentinos (ARS).
-El precio debe incluir el símbolo de la moneda (ej: $1500 ARS).
-Proporciona una breve explicación de tu razonamiento detrás del precio sugerido.
-
-Descripción del Producto: ${productDescription}
-Material Usado: ${materialUsed}
-Tiempo de Impresión: ${printingTime}
-
-Responde SOLO con un JSON válido con esta estructura exacta (sin markdown, sin backticks):
-{"suggestedPrice": "$XXXX ARS", "reasoning": "tu explicación aquí"}`;
+    const prompt = buildPricingPrompt(parsed.data);
 
     const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
     let lastError = "";

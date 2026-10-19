@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { Printer } from "@/lib/supabase";
+import type { CostContext } from "@/lib/pricing-prompt";
 
 export const calculatorSchema = z.object({
   filamentCostPerKg: z.coerce.number().min(0).default(15000),
@@ -25,6 +26,24 @@ export type CalculationResults = {
   sellingPrice: number; mercadoLibrePrice: number; profitAmount: number;
   costPerUnit: number; sellingPricePerUnit: number; quantity: number;
 };
+
+/** Last calculation shared with the AI assistant (per-unit amounts in ARS). */
+export type CalculationSnapshot = CostContext & {
+  materialUsed: string;
+  printTimeHours: number;
+  printTimeMinutes: number;
+};
+
+export function toCalculationSnapshot(values: CalculatorFormValues, results: CalculationResults): CalculationSnapshot {
+  return {
+    materialUsed: values.materialUsed,
+    printTimeHours: values.printTimeHours,
+    printTimeMinutes: values.printTimeMinutes,
+    costPerUnit: results.costPerUnit,
+    sellingPricePerUnit: results.sellingPricePerUnit,
+    profitMultiplier: values.profitMultiplier,
+  };
+}
 
 // MercadoLibre descuenta la comisión del precio de venta: para recibir el precio objetivo hay que dividir por (1 - comisión)
 export const MERCADOLIBRE_FEE_RATE = 0.16;

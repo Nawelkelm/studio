@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useForm, type SubmitHandler } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
 import { z } from "zod"
@@ -14,6 +14,9 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Sparkles, Bot } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
 import { supabase } from "@/lib/supabase"
+import type { CalculationSnapshot } from "@/lib/calculator"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Label } from "@/components/ui/label"
 
 const aiPricingSchema = z.object({
   productDescription: z.string().min(10, "Por favor, proporciona una descripción más detallada.").max(500),
@@ -28,9 +31,13 @@ type SuggestPricingResult = {
   reasoning: string;
 };
 
-export default function AiPricingAssistant() {
+const formatArs = (value: number) =>
+  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(value)
+
+export default function AiPricingAssistant({ calculation }: { calculation: CalculationSnapshot | null }) {
   const [isLoading, setIsLoading] = useState(false)
   const [result, setResult] = useState<SuggestPricingResult | null>(null)
+  const [useCalculation, setUseCalculation] = useState(true)
   const { toast } = useToast()
 
   const form = useForm<AiPricingFormValues>({
@@ -41,6 +48,14 @@ export default function AiPricingAssistant() {
       printingTime: 1,
     },
   })
+
+  // Prefill material and print time from the latest calculation
+  useEffect(() => {
+    if (!calculation) return
+    const hours = calculation.printTimeHours + calculation.printTimeMinutes / 60
+    form.setValue("materialUsed", calculation.materialUsed)
+    form.setValue("printingTime", Math.max(0.1, Math.round(hours * 10) / 10))
+  }, [calculation, form])
 
   const onSubmit: SubmitHandler<AiPricingFormValues> = async (data) => {
     setIsLoading(true)
@@ -56,6 +71,13 @@ export default function AiPricingAssistant() {
         body: JSON.stringify({
           ...data,
           printingTime: `${data.printingTime} horas`,
+          ...(useCalculation && calculation && {
+            costContext: {
+              costPerUnit: calculation.costPerUnit,
+              sellingPricePerUnit: calculation.sellingPricePerUnit,
+              profitMultiplier: calculation.profitMultiplier,
+            },
+          }),
         }),
       })
       if (!res.ok) {
@@ -88,6 +110,27 @@ export default function AiPricingAssistant() {
       <Form {...form}>
         <form onSubmit={form.handleSubmit(onSubmit)}>
           <CardContent className="space-y-4">
+            {calculation ? (
+              <div className="rounded-lg border border-primary/30 bg-secondary/40 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Checkbox
+                    id="use-calculation"
+                    checked={useCalculation}
+                    onCheckedChange={(checked) => setUseCalculation(checked === true)}
+                  />
+                  <Label htmlFor="use-calculation" className="text-sm font-medium cursor-pointer">
+                    Usar mi último cálculo como base
+                  </Label>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Costo de producción {formatArs(calculation.costPerUnit)} por unidad · precio con tu multiplicador x{calculation.profitMultiplier}: {formatArs(calculation.sellingPricePerUnit)}
+                </p>
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground rounded-lg border border-dashed p-3">
+                Tip: calculá primero una pieza en la calculadora y la IA va a usar tu costo real para sugerir el precio.
+              </p>
+            )}
             <FormField
               control={form.control}
               name="productDescription"

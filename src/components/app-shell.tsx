@@ -1,6 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useAuth } from "@/components/auth-provider";
+import type { CalculationSnapshot } from "@/lib/calculator";
 import LoginScreen from "@/components/login-screen";
 import CalculatorForm from "@/components/calculator-form";
 import AiPricingAssistant from "@/components/ai-pricing-assistant";
@@ -13,6 +15,8 @@ import Image from "next/image";
 
 export default function AppShell() {
   const { user, loading, signOut } = useAuth();
+  // Last calculator result, shared with the AI assistant (the tabs unmount their content when inactive)
+  const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
 
   if (loading) {
     return (
@@ -85,14 +89,14 @@ export default function AppShell() {
           </TabsTrigger>
         </TabsList>
         <TabsContent value="calculator">
-          <CalculatorForm />
+          <CalculatorForm onCalculated={setCalculation} />
         </TabsContent>
         <TabsContent value="registry">
           <QuotationRegistry />
         </TabsContent>
         <TabsContent value="ai">
           <div className="max-w-2xl mx-auto">
-            <AiPricingAssistant />
+            <AiPricingAssistant calculation={calculation} />
           </div>
         </TabsContent>
       </Tabs>

@@ -9,8 +9,8 @@ import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, L
 import { cn } from "@/lib/utils"
 import { supabase, type Printer as PrinterType } from "@/lib/supabase"
 import {
-  calculatorSchema, calculateResults, getPresetUpdates, isPresetField,
-  type CalculatorFormValues, type CalculationResults,
+  calculatorSchema, calculateResults, getPresetUpdates, isPresetField, toCalculationSnapshot,
+  type CalculatorFormValues, type CalculationResults, type CalculationSnapshot,
 } from "@/lib/calculator"
 import { useAuth } from "@/components/auth-provider"
 import {
@@ -41,7 +41,7 @@ function getPieceStorageKey(printerId: string | null) {
   return printerId ? `3d-piece-${printerId}` : "3d-piece-default";
 }
 
-export default function CalculatorForm() {
+export default function CalculatorForm({ onCalculated }: { onCalculated?: (snapshot: CalculationSnapshot) => void }) {
     const { user } = useAuth();
     const [results, setResults] = useState<CalculationResults | null>(null);
     const [clientName, setClientName] = useState("");
@@ -194,7 +194,11 @@ export default function CalculatorForm() {
         toast({ title: "Formulario reseteado" });
     };
 
-    const onSubmit = (values: CalculatorFormValues) => setResults(calculateResults(values));
+    const onSubmit = (values: CalculatorFormValues) => {
+        const calculated = calculateResults(values);
+        setResults(calculated);
+        onCalculated?.(toCalculationSnapshot(values, calculated));
+    };
 
     const chartData = useMemo(() => {
         if (!results) return [];

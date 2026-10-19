@@ -5,6 +5,7 @@ import {
   getPresetUpdates,
   isPresetField,
   MERCADOLIBRE_FEE_RATE,
+  toCalculationSnapshot,
   type CalculatorFormValues,
 } from "./calculator";
 import type { Printer } from "./supabase";
@@ -75,6 +76,22 @@ describe("calculateResults", () => {
   it("a x1 multiplier yields zero profit", () => {
     const r = calculateResults({ ...baseValues, profitMultiplier: 1 });
     expect(r.profitAmount).toBeCloseTo(0);
+  });
+});
+
+describe("toCalculationSnapshot", () => {
+  it("shares per-unit cost and price plus the inputs the AI assistant prefills", () => {
+    const results = calculateResults({ ...baseValues, quantity: 3 });
+    const snapshot = toCalculationSnapshot({ ...baseValues, quantity: 3 }, results);
+    expect(snapshot).toEqual({
+      materialUsed: "PLA",
+      printTimeHours: 2,
+      printTimeMinutes: 30,
+      costPerUnit: results.costPerUnit, // per unit, not the 3-unit total
+      sellingPricePerUnit: results.sellingPricePerUnit,
+      profitMultiplier: 3,
+    });
+    expect(snapshot.costPerUnit).toBeCloseTo(2350);
   });
 });
 
