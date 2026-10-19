@@ -242,6 +242,18 @@ export default function CalculatorForm() {
         if (!results || !clientName.trim() || !user) return false;
         setSavingQuotation(true);
         const v = form.getValues();
+        const internalBreakdown = {
+            material_cost: results.materialCost,
+            electricity_cost: results.electricityCost,
+            depreciation_cost: results.depreciationCost,
+            error_margin_cost: results.errorMarginCost,
+            additional_costs: results.suppliesCost,
+            production_cost_total: results.totalCostWithSupplies,
+            net_profit: results.profitAmount,
+            mercado_libre_price: results.mercadoLibrePrice,
+            cost_per_unit: results.costPerUnit,
+            selling_price_per_unit: results.sellingPricePerUnit,
+        };
         const { error } = await supabase.from("quotations").insert({
             user_id: user.id,
             user_name: user.user_metadata?.full_name || user.email || "Desconocido",
@@ -253,6 +265,7 @@ export default function CalculatorForm() {
             print_time_hours: v.printTimeHours, print_time_minutes: v.printTimeMinutes,
             quantity: v.quantity, extra_costs: v.extraCosts, profit_multiplier: v.profitMultiplier,
             total_cost: results.totalCostWithSupplies, selling_price: results.sellingPrice, status: "pendiente",
+            notes: JSON.stringify(internalBreakdown),
         });
         setSavingQuotation(false);
         if (error) { toast({ variant: "destructive", title: "Error", description: "No se pudo guardar la cotización." }); return false; }
@@ -266,7 +279,6 @@ export default function CalculatorForm() {
         const { default: jsPDF } = await import('jspdf');
         await import('jspdf-autotable');
         const doc = new jsPDF();
-        const fv = form.getValues();
 
         try {
           const logoRes = await fetch('/logo.png');
@@ -288,21 +300,18 @@ export default function CalculatorForm() {
         let startY = 60;
         if (selectedPrinter) { doc.setFontSize(9); doc.text(`Impresora: ${selectedPrinter.name}`, 14, 58); startY = 64; }
 
-        const ph = parseFloat(String(fv.printTimeHours || "0")); const pm = parseFloat(String(fv.printTimeMinutes || "0"));
         const tableData: string[][] = [
-            ['Costo de Material', `${fv.printWeightGrams}g en ${fv.materialUsed}`, formatCurrency(results.materialCost)],
-            ['Costo de Electricidad', `${fv.printerPower}W x ${ph} hs y ${pm} min`, formatCurrency(results.electricityCost)],
-            ['Amortización', `Vida útil: ${fv.printerLifespan} hs`, formatCurrency(results.depreciationCost)],
-            ['Margen de Error', `${fv.failureRatePercent}%`, formatCurrency(results.errorMarginCost)],
+            ['Servicio de impresión 3D personalizado', '', formatCurrency(results.sellingPrice)],
         ];
-        if (results.suppliesCost > 0) tableData.push(['Costos Adicionales', '', formatCurrency(results.suppliesCost)]);
-        if (results.quantity > 1) tableData.push(['Cantidad', `${results.quantity} unidades`, '']);
+        if (results.quantity > 1) {
+            tableData.push(['Cantidad', `${results.quantity} unidades`, '']);
+            tableData.push(['Precio por unidad', '', formatCurrency(results.sellingPricePerUnit)]);
+        }
 
-        doc.autoTable({ startY, head: [['Concepto', 'Detalle', 'Monto']], body: tableData, theme: 'striped', headStyles: { fillColor: [30, 16, 84] } });
+        doc.autoTable({ startY, head: [['Servicio', 'Detalle', 'Total']], body: tableData, theme: 'striped', headStyles: { fillColor: [30, 16, 84] } });
         const finalY = (doc as any).lastAutoTable.finalY || 100;
-        doc.setFontSize(10); doc.setFont("helvetica", "normal"); doc.text(`Costo de Producción: ${formatCurrency(results.totalCostWithSupplies)}`, 196, finalY + 15, { align: 'right' });
-        doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text("TOTAL:", 140, finalY + 30, { align: 'right' }); doc.text(formatCurrency(results.sellingPrice), 196, finalY + 30, { align: 'right' });
-        if (results.quantity > 1) { doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.text(`(${formatCurrency(results.sellingPricePerUnit)} por unidad)`, 196, finalY + 38, { align: 'right' }); }
+        doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text("TOTAL SERVICIO:", 140, finalY + 20, { align: 'right' }); doc.text(formatCurrency(results.sellingPrice), 196, finalY + 20, { align: 'right' });
+        doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.text("Cotización comercial: no incluye desglose de costos internos.", 14, finalY + 28);
         const pageH = doc.internal.pageSize.height;
         doc.line(14, pageH - 20, 196, pageH - 20); doc.setFontSize(8); doc.text("Documento no válido como comprobante fiscal. Válido por 7 días.", 105, pageH - 15, { align: 'center' });
         doc.save(`Cotizacion-${clientName.replace(/\s/g, '_') || 'Cliente'}.pdf`);
