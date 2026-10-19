@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { supabase, type Quotation } from "@/lib/supabase";
 import { useAuth } from "@/components/auth-provider";
+import QuotationStats from "@/components/quotation-stats";
 import {
   Card,
   CardContent,
@@ -43,29 +44,30 @@ const statusConfig = {
 export default function QuotationRegistry() {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [quotations, setQuotations] = useState<Quotation[]>([]);
+  const [allQuotations, setAllQuotations] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>("todas");
 
+  // Always load everything and filter in memory, so the stats panel isn't affected by the table filter
+  const quotations = useMemo(
+    () => (filter === "todas" ? allQuotations : allQuotations.filter((q) => q.status === filter)),
+    [allQuotations, filter],
+  );
+
   const fetchQuotations = useCallback(async () => {
     setLoading(true);
-    let query = supabase
+    const { data, error } = await supabase
       .from("quotations")
       .select("*")
       .order("created_at", { ascending: false });
 
-    if (filter !== "todas") {
-      query = query.eq("status", filter);
-    }
-
-    const { data, error } = await query;
     if (error) {
       toast({ variant: "destructive", title: "Error", description: "No se pudieron cargar las cotizaciones." });
     } else {
-      setQuotations(data || []);
+      setAllQuotations(data || []);
     }
     setLoading(false);
-  }, [filter, toast]);
+  }, [toast]);
 
   useEffect(() => {
     if (user) fetchQuotations();
@@ -151,6 +153,8 @@ export default function QuotationRegistry() {
   };
 
   return (
+    <div className="space-y-6">
+    {!loading && allQuotations.length > 0 && <QuotationStats quotations={allQuotations} />}
     <Card className="w-full">
       <CardHeader>
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -280,5 +284,6 @@ export default function QuotationRegistry() {
         )}
       </CardContent>
     </Card>
+    </div>
   );
 }
