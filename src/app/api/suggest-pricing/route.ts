@@ -41,11 +41,33 @@ async function getAuthenticatedUserId(req: NextRequest): Promise<string | null> 
   return typeof user?.id === "string" ? user.id : null;
 }
 
+// Asks the database whether the caller's account was approved by an administrator (RPC runs with the caller's token).
+async function isActiveUser(req: NextRequest): Promise<boolean> {
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
+  if (!supabaseUrl || !anonKey || !token) return false;
+
+  const res = await fetch(`${supabaseUrl}/rest/v1/rpc/is_active_user`, {
+    method: "POST",
+    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) return false;
+  return (await res.json().catch(() => null)) === true;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const userId = await getAuthenticatedUserId(req);
     if (!userId) {
       return NextResponse.json({ error: "Iniciá sesión para usar el asistente de IA" }, { status: 401 });
+    }
+    if (!(await isActiveUser(req))) {
+      return NextResponse.json(
+        { error: "Tu cuenta no tiene acceso a la herramienta. Pedile acceso a un administrador." },
+        { status: 403 }
+      );
     }
     if (isRateLimited(userId)) {
       return NextResponse.json(

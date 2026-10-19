@@ -1,24 +1,27 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import type { User } from "@supabase/supabase-js";
 import { useAuth } from "@/components/auth-provider";
 import type { CalculationSnapshot } from "@/lib/calculator";
+import { supabase } from "@/lib/supabase";
 import LoginScreen from "@/components/login-screen";
+import AccessScreen from "@/components/access-screen";
 import CalculatorForm from "@/components/calculator-form";
 import AiPricingAssistant from "@/components/ai-pricing-assistant";
 import QuotationRegistry from "@/components/quotation-registry";
+import UserAdmin from "@/components/user-admin";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Calculator, Sparkles, ClipboardList, LogOut, Loader2 } from "lucide-react";
+import { Calculator, Sparkles, ClipboardList, LogOut, Loader2, Users } from "lucide-react";
 import Image from "next/image";
 
 export default function AppShell() {
-  const { user, loading, signOut } = useAuth();
-  // Last calculator result, shared with the AI assistant
-  const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
+  const { user, loading, access, accessLoading, accessError, refreshAccess, signOut } = useAuth();
 
-  if (loading) {
+  if (loading || accessLoading) {
     return (
       <main className="flex min-h-screen items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -29,6 +32,33 @@ export default function AppShell() {
   if (!user) {
     return <LoginScreen />;
   }
+
+  // Nothing of the app mounts (and no data is requested) until an administrator has approved the account
+  const email = user.email ?? "";
+  if (accessError || !access) {
+    return <AccessScreen kind="error" email={email} message={accessError} onRefresh={refreshAccess} onSignOut={signOut} />;
+  }
+  if (access.status !== "active") {
+    return <AccessScreen kind={access.status} email={email} onRefresh={refreshAccess} onSignOut={signOut} />;
+  }
+
+  return <AuthenticatedApp user={user} isAdmin={access.role === "admin"} onSignOut={signOut} />;
+}
+
+function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: boolean; onSignOut: () => Promise<void> }) {
+  // Last calculator result, shared with the AI assistant
+  const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+
+  // Admins get a badge on the Users tab when someone is waiting for approval
+  useEffect(() => {
+    if (!isAdmin) return;
+    supabase
+      .from("app_users")
+      .select("email", { count: "exact", head: true })
+      .eq("status", "pending")
+      .then(({ count }) => setPendingCount(count ?? 0));
+  }, [isAdmin]);
 
   const userName = user.user_metadata?.full_name || user.email || "";
   const userAvatar = user.user_metadata?.avatar_url || "";
@@ -49,7 +79,8 @@ export default function AppShell() {
             <AvatarFallback className="text-xs">{initials}</AvatarFallback>
           </Avatar>
           <span className="text-sm text-muted-foreground hidden sm:inline">{userName}</span>
-          <Button variant="ghost" size="sm" onClick={signOut} className="text-muted-foreground hover:text-foreground">
+          {isAdmin && <Badge variant="secondary" className="hidden sm:inline-flex">Admin</Badge>}
+          <Button variant="ghost" size="sm" onClick={onSignOut} className="text-muted-foreground hover:text-foreground" aria-label="Cerrar sesión">
             <LogOut className="h-4 w-4" />
           </Button>
         </div>
@@ -77,7 +108,7 @@ export default function AppShell() {
 
       {/* Tabs */}
       <Tabs defaultValue="calculator" className="w-full max-w-7xl">
-        <TabsList className="grid w-full max-w-lg mx-auto grid-cols-3 mb-8">
+        <TabsList className={`grid w-full mx-auto mb-8 ${isAdmin ? "max-w-2xl grid-cols-4" : "max-w-lg grid-cols-3"}`}>
           <TabsTrigger value="calculator" className="gap-2">
             <Calculator className="h-4 w-4" /> <span className="hidden sm:inline">Calculadora</span>
           </TabsTrigger>
@@ -87,9 +118,17 @@ export default function AppShell() {
           <TabsTrigger value="ai" className="gap-2">
             <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">Asistente IA</span>
           </TabsTrigger>
+          {isAdmin && (
+            <TabsTrigger value="users" className="gap-2">
+              <Users className="h-4 w-4" /> <span className="hidden sm:inline">Usuarios</span>
+              {pendingCount > 0 && (
+                <span className="rounded-full bg-yellow-500 px-1.5 text-[10px] font-bold leading-4 text-black">{pendingCount}</span>
+              )}
+            </TabsTrigger>
+          )}
         </TabsList>
         {/* Calculator and AI tabs stay mounted (hidden when inactive) so results and typed data survive tab switches.
-            The registry unmounts on purpose: it reloads the quotations every time it is opened. */}
+            The registry and users tabs unmount on purpose: they reload their data every time they are opened. */}
         <TabsContent value="calculator" forceMount className="data-[state=inactive]:hidden">
           <CalculatorForm onCalculated={setCalculation} />
         </TabsContent>
@@ -101,6 +140,11 @@ export default function AppShell() {
             <AiPricingAssistant calculation={calculation} />
           </div>
         </TabsContent>
+        {isAdmin && (
+          <TabsContent value="users">
+            <UserAdmin currentEmail={user.email ?? ""} onPendingCountChange={setPendingCount} />
+          </TabsContent>
+        )}
       </Tabs>
     </main>
   );

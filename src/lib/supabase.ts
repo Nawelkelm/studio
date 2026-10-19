@@ -37,6 +37,24 @@ export type Printer = {
   updated_at: string;
 };
 
+export type UserStatus = "pending" | "active" | "blocked";
+export type UserRole = "admin" | "user";
+
+/** Result of register_login(): what the signed-in account is allowed to do. */
+export type Access = { status: UserStatus; role: UserRole };
+
+export type AppUser = {
+  email: string;
+  user_id: string | null;
+  full_name: string | null;
+  avatar_url: string | null;
+  role: UserRole;
+  status: UserStatus;
+  created_at: string;
+  updated_at: string;
+  last_login_at: string | null;
+};
+
 export type Quotation = {
   id: string;
   user_id: string;
