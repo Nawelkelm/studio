@@ -89,7 +89,7 @@ export default function QuotationRegistry() {
     const { default: jsPDF } = await import("jspdf");
     await import("jspdf-autotable");
 
-    const doc = new jsPDF({ orientation: "landscape" }) as any;
+    const doc = new jsPDF({ orientation: "landscape" });
 
     try {
       const logoRes = await fetch("/logo.png");

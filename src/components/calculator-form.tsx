@@ -3,13 +3,15 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react"
 import { useForm } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { z } from "zod"
-import type jsPDF from 'jspdf'
 import { BarChart3, Calculator, FileText, RotateCcw, Settings, PieChart as PieChartIcon, Package, Printer, Save, Loader2, CloudUpload } from "lucide-react"
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from "recharts"
 
 import { cn } from "@/lib/utils"
 import { supabase, type Printer as PrinterType } from "@/lib/supabase"
+import {
+  calculatorSchema, calculateResults, getPresetUpdates, isPresetField,
+  type CalculatorFormValues, type CalculationResults,
+} from "@/lib/calculator"
 import { useAuth } from "@/components/auth-provider"
 import {
   Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle,
@@ -27,52 +29,12 @@ import {
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
 
-declare module 'jspdf' {
-  interface jsPDF { autoTable: (options: any) => jsPDF; }
-}
-
-const calculatorSchema = z.object({
-  filamentCostPerKg: z.coerce.number().min(0).default(15000),
-  materialUsed: z.string().min(1, "Requerido").default("PLA"),
-  electricityCostKwh: z.coerce.number().min(0).default(140),
-  printerPower: z.coerce.number().min(1).default(120),
-  printerLifespan: z.coerce.number().min(1).default(4320),
-  printerCost: z.coerce.number().min(0).default(150000),
-  failureRatePercent: z.coerce.number().min(0).max(100).default(30),
-  printTimeHours: z.coerce.number().min(0).default(0),
-  printTimeMinutes: z.coerce.number().min(0).max(59).default(0),
-  printWeightGrams: z.coerce.number().min(0).default(95),
-  extraCosts: z.coerce.number().min(0).default(0),
-  profitMultiplier: z.coerce.number().min(1).max(10).default(5),
-  quantity: z.coerce.number().min(1).default(1),
-});
-type CalculatorFormValues = z.infer<typeof calculatorSchema>;
-
-type CalculationResults = {
-  materialCost: number; electricityCost: number; depreciationCost: number;
-  errorMarginCost: number; suppliesCost: number; totalCostWithSupplies: number;
-  sellingPrice: number; mercadoLibrePrice: number; profitAmount: number;
-  costPerUnit: number; sellingPricePerUnit: number; quantity: number;
-};
-
 type BusinessInfo = { businessName: string; cuit: string; address: string; phone: string; };
 
-// MercadoLibre descuenta la comisión del precio de venta: para recibir el precio objetivo hay que dividir por (1 - comisión)
-const MERCADOLIBRE_FEE_RATE = 0.16;
 const BUSINESS_INFO_KEY = "3d-calculator-business-info";
 const CHART_COLORS = ["hsl(252,78%,65%)","hsl(240,60%,50%)","hsl(268,80%,58%)","hsl(278,65%,62%)","hsl(200,70%,55%)"];
 const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" };
 
-// Fields synced to the Supabase printers table (shared across all users) and their DB columns
-const PRESET_COLUMNS = {
-  filamentCostPerKg: 'filament_cost_per_kg',
-  electricityCostKwh: 'electricity_cost_kwh',
-  printerPower: 'printer_power',
-  printerLifespan: 'printer_lifespan',
-  printerCost: 'printer_cost',
-  failureRatePercent: 'failure_rate_percent',
-} as const satisfies Record<string, keyof PrinterType>;
-type PresetField = keyof typeof PRESET_COLUMNS;
 const PRESET_SYNC_DELAY_MS = 2000;
 
 function getPieceStorageKey(printerId: string | null) {
@@ -187,19 +149,11 @@ export default function CalculatorForm() {
             try { localStorage.setItem(getPieceStorageKey(selectedPrinterId), JSON.stringify(pieceData)); } catch { /**/ }
 
             // Only real user edits of a preset field trigger a sync (not form.reset, not piece fields)
-            if (type !== 'change' || !selectedPrinterId || !name || !(name in PRESET_COLUMNS)) return;
+            if (type !== 'change' || !selectedPrinterId || !name || !isPresetField(name)) return;
             const printer = printersRef.current.find(p => p.id === selectedPrinterId);
             if (!printer) return;
 
-            // watch() yields raw input strings: validate/coerce each field and skip empty or invalid values
-            const updates: Record<string, number> = {};
-            for (const field of Object.keys(PRESET_COLUMNS) as PresetField[]) {
-                const raw = v[field];
-                if (raw === undefined || raw === null || String(raw).trim() === "") continue;
-                const parsed = calculatorSchema.shape[field].safeParse(raw);
-                const column = PRESET_COLUMNS[field];
-                if (parsed.success && parsed.data !== printer[column]) updates[column] = parsed.data;
-            }
+            const updates = getPresetUpdates(v, printer);
 
             if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
             if (Object.keys(updates).length === 0) { pendingSyncRef.current = null; return; }
@@ -240,27 +194,7 @@ export default function CalculatorForm() {
         toast({ title: "Formulario reseteado" });
     };
 
-    const onSubmit = (values: CalculatorFormValues) => {
-        const { filamentCostPerKg, electricityCostKwh, printerPower, printerLifespan, printerCost, failureRatePercent, printTimeHours, printTimeMinutes, printWeightGrams, extraCosts, profitMultiplier, quantity } = values;
-        const totalPrintTimeHours = printTimeHours + (printTimeMinutes / 60);
-        const materialCostUnit = (filamentCostPerKg / 1000) * printWeightGrams;
-        const electricityCostUnit = (printerPower / 1000) * totalPrintTimeHours * electricityCostKwh;
-        const depreciationCostUnit = printerLifespan > 0 ? (printerCost / printerLifespan) * totalPrintTimeHours : 0;
-        const baseCostUnit = materialCostUnit + electricityCostUnit + depreciationCostUnit;
-        const errorMarginCostUnit = baseCostUnit * (failureRatePercent / 100);
-        const totalCostUnit = baseCostUnit + errorMarginCostUnit + extraCosts;
-        const sellingPriceUnit = totalCostUnit * profitMultiplier;
-        const totalCostWithSupplies = totalCostUnit * quantity;
-        const sellingPrice = sellingPriceUnit * quantity;
-        setResults({
-            materialCost: materialCostUnit * quantity, electricityCost: electricityCostUnit * quantity,
-            depreciationCost: depreciationCostUnit * quantity, errorMarginCost: errorMarginCostUnit * quantity,
-            suppliesCost: extraCosts * quantity, totalCostWithSupplies, sellingPrice,
-            mercadoLibrePrice: sellingPrice / (1 - MERCADOLIBRE_FEE_RATE),
-            profitAmount: sellingPrice - totalCostWithSupplies,
-            costPerUnit: totalCostUnit, sellingPricePerUnit: sellingPriceUnit, quantity,
-        });
-    };
+    const onSubmit = (values: CalculatorFormValues) => setResults(calculateResults(values));
 
     const chartData = useMemo(() => {
         if (!results) return [];
@@ -349,7 +283,7 @@ export default function CalculatorForm() {
         }
 
         doc.autoTable({ startY, head: [['Servicio', 'Detalle', 'Total']], body: tableData, theme: 'striped', headStyles: { fillColor: [30, 16, 84] } });
-        const finalY = (doc as any).lastAutoTable.finalY || 100;
+        const finalY = doc.lastAutoTable.finalY || 100;
         doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text("TOTAL SERVICIO:", 140, finalY + 20, { align: 'right' }); doc.text(formatCurrency(results.sellingPrice), 196, finalY + 20, { align: 'right' });
         doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.text("Cotización comercial: no incluye desglose de costos internos.", 14, finalY + 28);
         const pageH = doc.internal.pageSize.height;
