@@ -15,7 +15,7 @@ import Image from "next/image";
 
 export default function AppShell() {
   const { user, loading, signOut } = useAuth();
-  // Last calculator result, shared with the AI assistant (the tabs unmount their content when inactive)
+  // Last calculator result, shared with the AI assistant
   const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
 
   if (loading) {
@@ -88,13 +88,15 @@ export default function AppShell() {
             <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">Asistente IA</span>
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="calculator">
+        {/* Calculator and AI tabs stay mounted (hidden when inactive) so results and typed data survive tab switches.
+            The registry unmounts on purpose: it reloads the quotations every time it is opened. */}
+        <TabsContent value="calculator" forceMount className="data-[state=inactive]:hidden">
           <CalculatorForm onCalculated={setCalculation} />
         </TabsContent>
         <TabsContent value="registry">
           <QuotationRegistry />
         </TabsContent>
-        <TabsContent value="ai">
+        <TabsContent value="ai" forceMount className="data-[state=inactive]:hidden">
           <div className="max-w-2xl mx-auto">
             <AiPricingAssistant calculation={calculation} />
           </div>
