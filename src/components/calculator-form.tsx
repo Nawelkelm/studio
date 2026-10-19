@@ -57,13 +57,23 @@ type CalculationResults = {
 
 type BusinessInfo = { businessName: string; cuit: string; address: string; phone: string; };
 
-const MERCADOLIBRE_FEE_MULTIPLIER = 1.16;
+// MercadoLibre descuenta la comisión del precio de venta: para recibir el precio objetivo hay que dividir por (1 - comisión)
+const MERCADOLIBRE_FEE_RATE = 0.16;
 const BUSINESS_INFO_KEY = "3d-calculator-business-info";
 const CHART_COLORS = ["hsl(252,78%,65%)","hsl(240,60%,50%)","hsl(268,80%,58%)","hsl(278,65%,62%)","hsl(200,70%,55%)"];
 const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" };
 
-// Fields that are synced to Supabase printers table (shared across all users)
-const PRESET_FIELDS = ['filamentCostPerKg', 'electricityCostKwh', 'printerPower', 'printerLifespan', 'printerCost', 'failureRatePercent'] as const;
+// Fields synced to the Supabase printers table (shared across all users) and their DB columns
+const PRESET_COLUMNS = {
+  filamentCostPerKg: 'filament_cost_per_kg',
+  electricityCostKwh: 'electricity_cost_kwh',
+  printerPower: 'printer_power',
+  printerLifespan: 'printer_lifespan',
+  printerCost: 'printer_cost',
+  failureRatePercent: 'failure_rate_percent',
+} as const satisfies Record<string, keyof PrinterType>;
+type PresetField = keyof typeof PRESET_COLUMNS;
+const PRESET_SYNC_DELAY_MS = 2000;
 
 function getPieceStorageKey(printerId: string | null) {
   return printerId ? `3d-piece-${printerId}` : "3d-piece-default";
@@ -79,7 +89,10 @@ export default function CalculatorForm() {
     const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
     const [savingQuotation, setSavingQuotation] = useState(false);
     const [syncingPresets, setSyncingPresets] = useState(false);
-    const syncTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const pendingSyncRef = useRef<{ printerId: string; updates: Record<string, number> } | null>(null);
+    const printersRef = useRef<PrinterType[]>([]);
+    const lastSavedQuotationRef = useRef<string | null>(null);
     const { toast } = useToast();
 
     const form = useForm<CalculatorFormValues>({
@@ -87,22 +100,31 @@ export default function CalculatorForm() {
         defaultValues: calculatorSchema.parse({}),
     });
 
+    useEffect(() => { printersRef.current = printers; }, [printers]);
+
     // Load printers from Supabase
     useEffect(() => {
-        supabase.from("printers").select("*").order("name").then(({ data }) => {
+        supabase.from("printers").select("*").order("name").then(({ data, error }) => {
+            if (error) {
+                toast({ variant: "destructive", title: "Error", description: "No se pudieron cargar las impresoras." });
+                return;
+            }
             if (data) {
+                printersRef.current = data;
                 setPrinters(data);
                 const saved = localStorage.getItem("3d-calc-printer");
                 if (saved && data.find(p => p.id === saved)) setSelectedPrinterId(saved);
                 else if (data.length > 0) setSelectedPrinterId(data[0].id);
             }
         });
-    }, []);
+    }, [toast]);
 
-    // Load form data when printer changes: presets from Supabase, piece data from localStorage
+    // Load form data when the printer changes: presets from Supabase, piece data from localStorage.
+    // Depends only on the selection (not on `printers`) so a successful preset sync doesn't reset the form or clear results.
+    const printersLoaded = printers.length > 0;
     useEffect(() => {
         if (!selectedPrinterId) return;
-        const printer = printers.find(p => p.id === selectedPrinterId);
+        const printer = printersRef.current.find(p => p.id === selectedPrinterId);
         if (!printer) return;
 
         // Load piece-specific data from localStorage (time, weight, quantity, extras, material, multiplier)
@@ -133,49 +155,60 @@ export default function CalculatorForm() {
             ...(pieceData.profitMultiplier !== undefined && { profitMultiplier: pieceData.profitMultiplier }),
         });
         setResults(null);
-    }, [selectedPrinterId, printers, form]);
+    }, [selectedPrinterId, printersLoaded, form]);
 
-    // Persist piece-specific data to localStorage + sync preset changes to Supabase
+    // Writes the pending (already validated) preset changes to Supabase. Any user may edit the shared presets.
+    const flushPresetSync = useCallback(async () => {
+        if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
+        const pending = pendingSyncRef.current;
+        pendingSyncRef.current = null;
+        if (!pending) return;
+        setSyncingPresets(true);
+        const { error } = await supabase.from("printers")
+            .update({ ...pending.updates, updated_at: new Date().toISOString() })
+            .eq("id", pending.printerId);
+        setSyncingPresets(false);
+        if (error) {
+            toast({ variant: "destructive", title: "No se pudo sincronizar", description: "Los valores de la impresora no se guardaron para el resto de los usuarios." });
+            return;
+        }
+        setPrinters(prev => prev.map(p => p.id === pending.printerId ? { ...p, ...pending.updates } as PrinterType : p));
+    }, [toast]);
+
+    // Persist piece-specific data to localStorage + sync preset edits to Supabase
     useEffect(() => {
-        const sub = form.watch((v) => {
+        const sub = form.watch((v, { name, type }) => {
             // Save piece-specific fields to localStorage
             const pieceData = {
                 printTimeHours: v.printTimeHours, printTimeMinutes: v.printTimeMinutes,
                 printWeightGrams: v.printWeightGrams, quantity: v.quantity,
                 extraCosts: v.extraCosts, materialUsed: v.materialUsed, profitMultiplier: v.profitMultiplier,
             };
-            localStorage.setItem(getPieceStorageKey(selectedPrinterId), JSON.stringify(pieceData));
+            try { localStorage.setItem(getPieceStorageKey(selectedPrinterId), JSON.stringify(pieceData)); } catch { /**/ }
 
-            // Debounced sync of preset fields to Supabase (2s delay)
-            if (selectedPrinterId) {
-                if (syncTimerRef.current) clearTimeout(syncTimerRef.current);
-                syncTimerRef.current = setTimeout(() => {
-                    const printer = printers.find(p => p.id === selectedPrinterId);
-                    if (!printer) return;
-                    const updates: Record<string, number> = {};
-                    if (v.filamentCostPerKg !== undefined && v.filamentCostPerKg !== printer.filament_cost_per_kg) updates.filament_cost_per_kg = v.filamentCostPerKg;
-                    if (v.electricityCostKwh !== undefined && v.electricityCostKwh !== printer.electricity_cost_kwh) updates.electricity_cost_kwh = v.electricityCostKwh;
-                    if (v.printerPower !== undefined && v.printerPower !== printer.printer_power) updates.printer_power = v.printerPower;
-                    if (v.printerLifespan !== undefined && v.printerLifespan !== printer.printer_lifespan) updates.printer_lifespan = v.printerLifespan;
-                    if (v.printerCost !== undefined && v.printerCost !== printer.printer_cost) updates.printer_cost = v.printerCost;
-                    if (v.failureRatePercent !== undefined && v.failureRatePercent !== printer.failure_rate_percent) updates.failure_rate_percent = v.failureRatePercent;
+            // Only real user edits of a preset field trigger a sync (not form.reset, not piece fields)
+            if (type !== 'change' || !selectedPrinterId || !name || !(name in PRESET_COLUMNS)) return;
+            const printer = printersRef.current.find(p => p.id === selectedPrinterId);
+            if (!printer) return;
 
-                    if (Object.keys(updates).length > 0) {
-                        setSyncingPresets(true);
-                        supabase.from("printers").update({ ...updates, updated_at: new Date().toISOString() })
-                            .eq("id", selectedPrinterId).then(({ error }) => {
-                                setSyncingPresets(false);
-                                if (!error) {
-                                    // Update local printers state to reflect the change
-                                    setPrinters(prev => prev.map(p => p.id === selectedPrinterId ? { ...p, ...updates } as PrinterType : p));
-                                }
-                            });
-                    }
-                }, 2000);
+            // watch() yields raw input strings: validate/coerce each field and skip empty or invalid values
+            const updates: Record<string, number> = {};
+            for (const field of Object.keys(PRESET_COLUMNS) as PresetField[]) {
+                const raw = v[field];
+                if (raw === undefined || raw === null || String(raw).trim() === "") continue;
+                const parsed = calculatorSchema.shape[field].safeParse(raw);
+                const column = PRESET_COLUMNS[field];
+                if (parsed.success && parsed.data !== printer[column]) updates[column] = parsed.data;
             }
+
+            if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
+            if (Object.keys(updates).length === 0) { pendingSyncRef.current = null; return; }
+            pendingSyncRef.current = { printerId: selectedPrinterId, updates };
+            syncTimerRef.current = setTimeout(() => { void flushPresetSync(); }, PRESET_SYNC_DELAY_MS);
         });
-        return () => { sub.unsubscribe(); if (syncTimerRef.current) clearTimeout(syncTimerRef.current); };
-    }, [form, selectedPrinterId, printers]);
+        // Flush on printer switch / unmount so a quick edit isn't lost
+        return () => { sub.unsubscribe(); void flushPresetSync(); };
+    }, [form, selectedPrinterId, flushPresetSync]);
 
     // Load business info
     useEffect(() => {
@@ -223,7 +256,7 @@ export default function CalculatorForm() {
             materialCost: materialCostUnit * quantity, electricityCost: electricityCostUnit * quantity,
             depreciationCost: depreciationCostUnit * quantity, errorMarginCost: errorMarginCostUnit * quantity,
             suppliesCost: extraCosts * quantity, totalCostWithSupplies, sellingPrice,
-            mercadoLibrePrice: sellingPrice * MERCADOLIBRE_FEE_MULTIPLIER,
+            mercadoLibrePrice: sellingPrice / (1 - MERCADOLIBRE_FEE_RATE),
             profitAmount: sellingPrice - totalCostWithSupplies,
             costPerUnit: totalCostUnit, sellingPricePerUnit: sellingPriceUnit, quantity,
         });
@@ -240,8 +273,14 @@ export default function CalculatorForm() {
 
     const saveQuotationToDb = useCallback(async () => {
         if (!results || !clientName.trim() || !user) return false;
-        setSavingQuotation(true);
         const v = form.getValues();
+        // Same client + printer + inputs + result => already registered; don't insert a duplicate row
+        const signature = JSON.stringify([clientName.trim(), selectedPrinterId, v, results.sellingPrice]);
+        if (lastSavedQuotationRef.current === signature) {
+            toast({ title: "Cotización ya registrada", description: "Esta cotización ya figura en el historial." });
+            return true;
+        }
+        setSavingQuotation(true);
         const internalBreakdown = {
             material_cost: results.materialCost,
             electricity_cost: results.electricityCost,
@@ -269,6 +308,7 @@ export default function CalculatorForm() {
         });
         setSavingQuotation(false);
         if (error) { toast({ variant: "destructive", title: "Error", description: "No se pudo guardar la cotización." }); return false; }
+        lastSavedQuotationRef.current = signature;
         toast({ title: "Cotización guardada", description: "Se registró en el historial." });
         return true;
     }, [results, clientName, user, form, selectedPrinterId, selectedPrinter, toast]);
@@ -429,7 +469,7 @@ export default function CalculatorForm() {
                                        <Separator className="my-3 bg-border/50"/>
                                        <ResultRow label="Precio de Venta" value={results.sellingPrice} className="text-2xl text-primary" isBold/>
                                        <ResultRow label="Ganancia Neta" value={results.profitAmount} className="text-lg text-green-400" isBold/>
-                                       <ResultRow label="Precio MercadoLibre (+16%)" value={results.mercadoLibrePrice} className="text-lg text-yellow-400" isBold/>
+                                       <ResultRow label="Precio MercadoLibre (comisión 16%)" value={results.mercadoLibrePrice} className="text-lg text-yellow-400" isBold/>
                                        {results.quantity > 1 && (<><Separator className="my-3 bg-border/50"/><div className="bg-secondary/50 rounded-lg p-3 space-y-1"><p className="text-xs text-muted-foreground font-medium">Precio por unidad ({results.quantity} uds)</p><ResultRow label="Costo/unidad" value={results.costPerUnit}/><ResultRow label="Precio/unidad" value={results.sellingPricePerUnit} isBold className="text-primary"/></div></>)}
                                    </CardContent>
                                    <CardFooter className="flex-col items-stretch gap-4 pt-4 border-t border-border/50">

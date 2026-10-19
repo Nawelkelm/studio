@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Sparkles, Bot } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { supabase } from "@/lib/supabase"
 
 const aiPricingSchema = z.object({
   productDescription: z.string().min(10, "Por favor, proporciona una descripción más detallada.").max(500),
@@ -45,9 +46,13 @@ export default function AiPricingAssistant() {
     setIsLoading(true)
     setResult(null)
     try {
+      const { data: { session } } = await supabase.auth.getSession()
       const res = await fetch("/api/suggest-pricing", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
+        },
         body: JSON.stringify({
           ...data,
           printingTime: `${data.printingTime} horas`,
