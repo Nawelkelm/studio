@@ -39,11 +39,15 @@ next-env.d.ts
 
 .genkit/*
 
-# env files
+# env files (the example with empty values is tracked)
 .env
 .env.local
 .env*.local
 .env*
+!.env.example
+
+# local assistant/editor tooling (may hold API keys)
+.continue/
 
 # firebase
 firebase-debug.log
