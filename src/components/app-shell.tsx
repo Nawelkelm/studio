@@ -49,6 +49,7 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
   // Last calculator result, shared with the AI assistant
   const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
+  const [tab, setTab] = useState("calculator");
 
   // Admins get a badge on the Users tab when someone is waiting for approval
   useEffect(() => {
@@ -107,7 +108,7 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
       </div>
 
       {/* Tabs */}
-      <Tabs defaultValue="calculator" className="w-full max-w-7xl">
+      <Tabs value={tab} onValueChange={setTab} className="w-full max-w-7xl">
         <TabsList className={`grid w-full mx-auto mb-8 ${isAdmin ? "max-w-2xl grid-cols-4" : "max-w-lg grid-cols-3"}`}>
           <TabsTrigger value="calculator" className="gap-2">
             <Calculator className="h-4 w-4" /> <span className="hidden sm:inline">Calculadora</span>
@@ -130,7 +131,7 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
         {/* Calculator and AI tabs stay mounted (hidden when inactive) so results and typed data survive tab switches.
             The registry and users tabs unmount on purpose: they reload their data every time they are opened. */}
         <TabsContent value="calculator" forceMount className="data-[state=inactive]:hidden">
-          <CalculatorForm onCalculated={setCalculation} />
+          <CalculatorForm onCalculated={setCalculation} onNavigate={setTab} />
         </TabsContent>
         <TabsContent value="registry">
           <QuotationRegistry />

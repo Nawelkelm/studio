@@ -1,482 +1,345 @@
 "use client"
 
-import { useState, useEffect, useMemo, useCallback, useRef } from "react"
-import { useForm } from "react-hook-form"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useForm, useWatch } from "react-hook-form"
 import { zodResolver } from "@hookform/resolvers/zod"
-import { BarChart3, Calculator, FileText, RotateCcw, Settings, PieChart as PieChartIcon, Package, Printer, Save, Loader2, CloudUpload } from "lucide-react"
-import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip as RechartsTooltip, Legend } from "recharts"
 
-import { cn } from "@/lib/utils"
-import { supabase, type Printer as PrinterType } from "@/lib/supabase"
-import {
-  calculatorSchema, calculateResults, getPresetUpdates, isPresetField, toCalculationSnapshot,
-  type CalculatorFormValues, type CalculationResults, type CalculationSnapshot,
-} from "@/lib/calculator"
+import { supabase, type Printer } from "@/lib/supabase"
 import { useAuth } from "@/components/auth-provider"
 import {
-  Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle,
-} from "@/components/ui/card"
-import {
-  Form, FormControl, FormField, FormItem, FormLabel, FormMessage,
-} from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Button } from "@/components/ui/button"
-import { Separator } from "@/components/ui/separator"
-import { Slider } from "@/components/ui/slider"
-import {
-  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
+  calculateLive, calculatorSchema, getPresetUpdates, marginPercent, toCalculationSnapshot,
+  type CalculationSnapshot, type CalculatorFormValues, PRESET_COLUMNS, type PresetField,
+} from "@/lib/calculator"
+import { buildSnapshot } from "@/lib/quotation-meta"
+import { emptyDraft, resolveFinalPrice, type QuoteDraft } from "@/lib/quote-draft"
+import { buildQuotationPdf, loadLogoDataUrl, quotationFileName, type BusinessInfo } from "@/lib/quotation-pdf"
+import { Form } from "@/components/ui/form"
 import { useToast } from "@/hooks/use-toast"
+import { PrinterStrip } from "@/components/quote/printer-strip"
+import { PieceFields } from "@/components/quote/piece-fields"
+import { PricePanel } from "@/components/quote/price-panel"
+import { SaveQuote } from "@/components/quote/save-quote"
+import { MobileSummaryBar } from "@/components/quote/mobile-summary-bar"
+import { BusinessInfoDialog } from "@/components/quote/business-info-dialog"
 
-type BusinessInfo = { businessName: string; cuit: string; address: string; phone: string; };
+const BUSINESS_INFO_KEY = "3d-calculator-business-info"
+const PRINTER_KEY = "3d-calc-printer"
+const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" }
+const SNAPSHOT_DEBOUNCE_MS = 400
 
-const BUSINESS_INFO_KEY = "3d-calculator-business-info";
-const CHART_COLORS = ["hsl(252,78%,65%)","hsl(240,60%,50%)","hsl(268,80%,58%)","hsl(278,65%,62%)","hsl(200,70%,55%)"];
-const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" };
+const pieceStorageKey = (printerId: string | null) => (printerId ? `3d-piece-${printerId}` : "3d-piece-default")
 
-const PRESET_SYNC_DELAY_MS = 2000;
-
-function getPieceStorageKey(printerId: string | null) {
-  return printerId ? `3d-piece-${printerId}` : "3d-piece-default";
+type Props = {
+  /** Fires (debounced) with the latest valid calculation so other tabs can use it */
+  onCalculated?: (snapshot: CalculationSnapshot) => void
+  onNavigate?: (tab: "registry") => void
 }
 
-export default function CalculatorForm({ onCalculated }: { onCalculated?: (snapshot: CalculationSnapshot) => void }) {
-    const { user } = useAuth();
-    const [results, setResults] = useState<CalculationResults | null>(null);
-    const [clientName, setClientName] = useState("");
-    const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(DEFAULT_BUSINESS_INFO);
-    const [settingsOpen, setSettingsOpen] = useState(false);
-    const [printers, setPrinters] = useState<PrinterType[]>([]);
-    const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null);
-    const [savingQuotation, setSavingQuotation] = useState(false);
-    const [syncingPresets, setSyncingPresets] = useState(false);
-    const syncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    const pendingSyncRef = useRef<{ printerId: string; updates: Record<string, number> } | null>(null);
-    const printersRef = useRef<PrinterType[]>([]);
-    const lastSavedQuotationRef = useRef<string | null>(null);
-    const { toast } = useToast();
+export default function CalculatorForm({ onCalculated, onNavigate }: Props) {
+  const { user } = useAuth()
+  const { toast } = useToast()
 
-    const form = useForm<CalculatorFormValues>({
-        resolver: zodResolver(calculatorSchema),
-        defaultValues: calculatorSchema.parse({}),
-    });
+  const [printers, setPrinters] = useState<Printer[]>([])
+  const [printersLoading, setPrintersLoading] = useState(true)
+  const [selectedPrinterId, setSelectedPrinterId] = useState<string | null>(null)
+  const [savingPresets, setSavingPresets] = useState(false)
+  const printersRef = useRef<Printer[]>([])
 
-    useEffect(() => { printersRef.current = printers; }, [printers]);
+  const [draft, setDraft] = useState<QuoteDraft>(() => emptyDraft())
+  const [savingQuotation, setSavingQuotation] = useState(false)
+  const [savedSignature, setSavedSignature] = useState<string | null>(null)
 
-    // Load printers from Supabase
-    useEffect(() => {
-        supabase.from("printers").select("*").order("name").then(({ data, error }) => {
-            if (error) {
-                toast({ variant: "destructive", title: "Error", description: "No se pudieron cargar las impresoras." });
-                return;
-            }
-            if (data) {
-                printersRef.current = data;
-                setPrinters(data);
-                const saved = localStorage.getItem("3d-calc-printer");
-                if (saved && data.find(p => p.id === saved)) setSelectedPrinterId(saved);
-                else if (data.length > 0) setSelectedPrinterId(data[0].id);
-            }
-        });
-    }, [toast]);
+  const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(DEFAULT_BUSINESS_INFO)
+  const [businessOpen, setBusinessOpen] = useState(false)
+  const [saveSectionVisible, setSaveSectionVisible] = useState(false)
 
-    // Load form data when the printer changes: presets from Supabase, piece data from localStorage.
-    // Depends only on the selection (not on `printers`) so a successful preset sync doesn't reset the form or clear results.
-    const printersLoaded = printers.length > 0;
-    useEffect(() => {
-        if (!selectedPrinterId) return;
-        const printer = printersRef.current.find(p => p.id === selectedPrinterId);
-        if (!printer) return;
+  const form = useForm<CalculatorFormValues>({
+    resolver: zodResolver(calculatorSchema),
+    defaultValues: calculatorSchema.parse({}),
+    mode: "onChange",
+  })
 
-        // Load piece-specific data from localStorage (time, weight, quantity, extras, material, multiplier)
-        const pieceKey = getPieceStorageKey(selectedPrinterId);
-        const savedPiece = localStorage.getItem(pieceKey);
-        let pieceData: Partial<CalculatorFormValues> = {};
-        if (savedPiece) {
-            try { pieceData = JSON.parse(savedPiece); } catch { localStorage.removeItem(pieceKey); }
-        }
+  // Everything below derives from what is typed, live
+  const watched = useWatch({ control: form.control })
+  const results = useMemo(() => calculateLive(watched), [watched])
+  const parsed = useMemo(() => calculatorSchema.safeParse(watched), [watched])
+  const selectedPrinter = printers.find((p) => p.id === selectedPrinterId)
+  const multiplier = parsed.success ? parsed.data.profitMultiplier : Number(watched.profitMultiplier) || 5
 
-        // Always load preset fields from Supabase (shared), piece fields from localStorage (local)
-        form.reset({
-            ...calculatorSchema.parse({}),
-            // Preset fields from Supabase (shared for all users)
-            filamentCostPerKg: printer.filament_cost_per_kg,
-            electricityCostKwh: printer.electricity_cost_kwh,
-            printerPower: printer.printer_power,
-            printerLifespan: printer.printer_lifespan,
-            printerCost: printer.printer_cost,
-            failureRatePercent: printer.failure_rate_percent,
-            // Piece fields from localStorage (per-user)
-            ...(pieceData.printTimeHours !== undefined && { printTimeHours: pieceData.printTimeHours }),
-            ...(pieceData.printTimeMinutes !== undefined && { printTimeMinutes: pieceData.printTimeMinutes }),
-            ...(pieceData.printWeightGrams !== undefined && { printWeightGrams: pieceData.printWeightGrams }),
-            ...(pieceData.quantity !== undefined && { quantity: pieceData.quantity }),
-            ...(pieceData.extraCosts !== undefined && { extraCosts: pieceData.extraCosts }),
-            ...(pieceData.materialUsed !== undefined && { materialUsed: pieceData.materialUsed }),
-            ...(pieceData.profitMultiplier !== undefined && { profitMultiplier: pieceData.profitMultiplier }),
-        });
-        setResults(null);
-    }, [selectedPrinterId, printersLoaded, form]);
+  // ---- printers -------------------------------------------------------------------------------------------
+  useEffect(() => { printersRef.current = printers }, [printers])
 
-    // Writes the pending (already validated) preset changes to Supabase. Any user may edit the shared presets.
-    const flushPresetSync = useCallback(async () => {
-        if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
-        const pending = pendingSyncRef.current;
-        pendingSyncRef.current = null;
-        if (!pending) return;
-        setSyncingPresets(true);
-        const { error } = await supabase.from("printers")
-            .update({ ...pending.updates, updated_at: new Date().toISOString() })
-            .eq("id", pending.printerId);
-        setSyncingPresets(false);
-        if (error) {
-            toast({ variant: "destructive", title: "No se pudo sincronizar", description: "Los valores de la impresora no se guardaron para el resto de los usuarios." });
-            return;
-        }
-        setPrinters(prev => prev.map(p => p.id === pending.printerId ? { ...p, ...pending.updates } as PrinterType : p));
-    }, [toast]);
+  useEffect(() => {
+    supabase.from("printers").select("*").order("name").then(({ data, error }) => {
+      setPrintersLoading(false)
+      if (error) {
+        toast({ variant: "destructive", title: "No se pudieron cargar las impresoras", description: error.message })
+        return
+      }
+      const list = (data ?? []) as Printer[]
+      printersRef.current = list
+      setPrinters(list)
+      const saved = localStorage.getItem(PRINTER_KEY)
+      if (saved && list.some((p) => p.id === saved)) setSelectedPrinterId(saved)
+      else if (list.length > 0) setSelectedPrinterId(list[0].id)
+    })
+  }, [toast])
 
-    // Persist piece-specific data to localStorage + sync preset edits to Supabase
-    useEffect(() => {
-        const sub = form.watch((v, { name, type }) => {
-            // Save piece-specific fields to localStorage
-            const pieceData = {
-                printTimeHours: v.printTimeHours, printTimeMinutes: v.printTimeMinutes,
-                printWeightGrams: v.printWeightGrams, quantity: v.quantity,
-                extraCosts: v.extraCosts, materialUsed: v.materialUsed, profitMultiplier: v.profitMultiplier,
-            };
-            try { localStorage.setItem(getPieceStorageKey(selectedPrinterId), JSON.stringify(pieceData)); } catch { /**/ }
+  // Selecting a printer loads its saved values; the piece fields come back from this browser's storage.
+  // Depends on the selection only, so saving the shared values never resets what is being typed.
+  const printersLoaded = printers.length > 0
+  useEffect(() => {
+    if (!selectedPrinterId) return
+    const printer = printersRef.current.find((p) => p.id === selectedPrinterId)
+    if (!printer) return
+    let piece: Partial<CalculatorFormValues> = {}
+    try {
+      const raw = localStorage.getItem(pieceStorageKey(selectedPrinterId))
+      if (raw) piece = JSON.parse(raw)
+    } catch { localStorage.removeItem(pieceStorageKey(selectedPrinterId)) }
 
-            // Only real user edits of a preset field trigger a sync (not form.reset, not piece fields)
-            if (type !== 'change' || !selectedPrinterId || !name || !isPresetField(name)) return;
-            const printer = printersRef.current.find(p => p.id === selectedPrinterId);
-            if (!printer) return;
+    form.reset({
+      ...calculatorSchema.parse({}),
+      ...presetValuesOf(printer),
+      ...(piece.printTimeHours !== undefined && { printTimeHours: piece.printTimeHours }),
+      ...(piece.printTimeMinutes !== undefined && { printTimeMinutes: piece.printTimeMinutes }),
+      ...(piece.printWeightGrams !== undefined && { printWeightGrams: piece.printWeightGrams }),
+      ...(piece.quantity !== undefined && { quantity: piece.quantity }),
+      ...(piece.extraCosts !== undefined && { extraCosts: piece.extraCosts }),
+      ...(piece.materialUsed !== undefined && { materialUsed: piece.materialUsed }),
+      ...(piece.profitMultiplier !== undefined && { profitMultiplier: piece.profitMultiplier }),
+    })
+  }, [selectedPrinterId, printersLoaded, form])
 
-            const updates = getPresetUpdates(v, printer);
+  // Keep this browser's piece data (the printer values live in the database, not here)
+  useEffect(() => {
+    const sub = form.watch((v) => {
+      const piece = {
+        printTimeHours: v.printTimeHours, printTimeMinutes: v.printTimeMinutes, printWeightGrams: v.printWeightGrams,
+        quantity: v.quantity, extraCosts: v.extraCosts, materialUsed: v.materialUsed, profitMultiplier: v.profitMultiplier,
+      }
+      try { localStorage.setItem(pieceStorageKey(selectedPrinterId), JSON.stringify(piece)) } catch { /* storage unavailable */ }
+    })
+    return () => sub.unsubscribe()
+  }, [form, selectedPrinterId])
 
-            if (syncTimerRef.current) { clearTimeout(syncTimerRef.current); syncTimerRef.current = null; }
-            if (Object.keys(updates).length === 0) { pendingSyncRef.current = null; return; }
-            pendingSyncRef.current = { printerId: selectedPrinterId, updates };
-            syncTimerRef.current = setTimeout(() => { void flushPresetSync(); }, PRESET_SYNC_DELAY_MS);
-        });
-        // Flush on printer switch / unmount so a quick edit isn't lost
-        return () => { sub.unsubscribe(); void flushPresetSync(); };
-    }, [form, selectedPrinterId, flushPresetSync]);
+  useEffect(() => {
+    try {
+      const stored = localStorage.getItem(BUSINESS_INFO_KEY)
+      if (stored) setBusinessInfo({ ...DEFAULT_BUSINESS_INFO, ...JSON.parse(stored) })
+    } catch { /* ignore a corrupt value */ }
+  }, [])
 
-    // Load business info
-    useEffect(() => {
-        const s = localStorage.getItem(BUSINESS_INFO_KEY);
-        if (s) try { setBusinessInfo(JSON.parse(s)); } catch { /**/ }
-    }, []);
+  // ---- shared printer values: explicit save ---------------------------------------------------------------
+  const presetUpdates = useMemo(
+    () => (selectedPrinter ? getPresetUpdates(watched, selectedPrinter) : {}),
+    [watched, selectedPrinter],
+  )
+  const changedCount = Object.keys(presetUpdates).length
 
-    const handlePrinterChange = (id: string) => {
-        setSelectedPrinterId(id);
-        localStorage.setItem("3d-calc-printer", id);
-    };
+  const savePresets = async () => {
+    if (!selectedPrinter || changedCount === 0) return
+    setSavingPresets(true)
+    const { error } = await supabase.from("printers")
+      .update({ ...presetUpdates, updated_at: new Date().toISOString() })
+      .eq("id", selectedPrinter.id)
+    setSavingPresets(false)
+    if (error) {
+      toast({ variant: "destructive", title: "No se pudieron guardar los valores", description: error.message })
+      return
+    }
+    setPrinters((prev) => prev.map((p) => (p.id === selectedPrinter.id ? { ...p, ...presetUpdates } as Printer : p)))
+    toast({ title: "Valores guardados", description: `${selectedPrinter.name} quedó actualizada para todo el equipo.` })
+  }
 
-    const selectedPrinter = printers.find(p => p.id === selectedPrinterId);
+  const discardPresets = () => {
+    if (!selectedPrinter) return
+    for (const [field, value] of Object.entries(presetValuesOf(selectedPrinter))) {
+      form.setValue(field as PresetField, value, { shouldDirty: false })
+    }
+  }
 
-    const handleSaveBusinessInfo = (info: BusinessInfo) => {
-        setBusinessInfo(info);
-        localStorage.setItem(BUSINESS_INFO_KEY, JSON.stringify(info));
-        setSettingsOpen(false);
-        toast({ title: "Datos guardados" });
-    };
+  // ---- hand the live calculation to the AI tab -------------------------------------------------------------
+  useEffect(() => {
+    if (!results || !parsed.success || !onCalculated) return
+    const timer = setTimeout(() => onCalculated(toCalculationSnapshot(parsed.data, results)), SNAPSHOT_DEBOUNCE_MS)
+    return () => clearTimeout(timer)
+  }, [results, parsed, onCalculated])
 
-    const handleReset = () => {
-        const printer = printers.find(p => p.id === selectedPrinterId);
-        if (printer) {
-            form.reset({ ...calculatorSchema.parse({}), filamentCostPerKg: printer.filament_cost_per_kg, electricityCostKwh: printer.electricity_cost_kwh, printerPower: printer.printer_power, printerLifespan: printer.printer_lifespan, printerCost: printer.printer_cost, failureRatePercent: printer.failure_rate_percent });
-        } else { form.reset(calculatorSchema.parse({})); }
-        setResults(null);
-        localStorage.removeItem(getPieceStorageKey(selectedPrinterId));
-        toast({ title: "Formulario reseteado" });
-    };
+  // ---- saving the quotation ---------------------------------------------------------------------------------
+  const finalPrice = results ? resolveFinalPrice(draft, results.sellingPrice) : null
 
-    const onSubmit = (values: CalculatorFormValues) => {
-        const calculated = calculateResults(values);
-        setResults(calculated);
-        onCalculated?.(toCalculationSnapshot(values, calculated));
-    };
+  // Same data => already saved; any change makes it a new quotation
+  const currentSignature = useMemo(
+    () => (results && parsed.success ? JSON.stringify([draft, finalPrice, selectedPrinterId, parsed.data]) : null),
+    [draft, finalPrice, selectedPrinterId, results, parsed],
+  )
+  const saved = currentSignature !== null && currentSignature === savedSignature
 
-    const chartData = useMemo(() => {
-        if (!results) return [];
-        return [
-            { name: "Material", value: results.materialCost }, { name: "Electricidad", value: results.electricityCost },
-            { name: "Amortización", value: results.depreciationCost }, { name: "Margen Error", value: results.errorMarginCost },
-            { name: "Adicionales", value: results.suppliesCost },
-        ].filter(i => i.value > 0);
-    }, [results]);
+  const saveQuotation = useCallback(async (): Promise<boolean> => {
+    if (!results || !parsed.success || finalPrice === null || !user || !draft.clientName.trim()) return false
+    if (currentSignature && currentSignature === savedSignature) return true
+    const v = parsed.data
+    setSavingQuotation(true)
+    const { error } = await supabase.from("quotations").insert({
+      user_id: user.id,
+      user_name: user.user_metadata?.full_name || user.email || "Desconocido",
+      user_email: user.email,
+      client_name: draft.clientName.trim(),
+      client_contact: draft.clientContact.trim() || null,
+      piece_name: draft.pieceName.trim() || null,
+      piece_description: draft.pieceDescription.trim() || null,
+      channel: draft.channel,
+      printer_id: selectedPrinterId,
+      printer_name: selectedPrinter?.name || "Sin impresora",
+      material_used: v.materialUsed, print_weight_grams: v.printWeightGrams,
+      print_time_hours: v.printTimeHours, print_time_minutes: v.printTimeMinutes,
+      quantity: v.quantity, extra_costs: v.extraCosts, profit_multiplier: v.profitMultiplier,
+      total_cost: results.totalCostWithSupplies,
+      selling_price: results.sellingPrice,
+      final_price: finalPrice,
+      valid_until: draft.validUntil || null,
+      internal_notes: draft.internalNotes.trim() || null,
+      snapshot: buildSnapshot(v, results, { id: selectedPrinterId, name: selectedPrinter?.name || "Sin impresora" }),
+      status: "pendiente",
+    })
+    setSavingQuotation(false)
+    if (error) {
+      console.error("Error al guardar la cotización:", error)
+      toast({ variant: "destructive", title: "No se pudo guardar la cotización", description: error.message })
+      return false
+    }
+    setSavedSignature(currentSignature)
+    return true
+  }, [results, parsed, finalPrice, user, draft, currentSignature, savedSignature, selectedPrinterId, selectedPrinter, toast])
 
-    const saveQuotationToDb = useCallback(async () => {
-        if (!results || !clientName.trim() || !user) return false;
-        // getValues() yields raw input strings for edited fields: send validated numbers to the DB
-        const parsedValues = calculatorSchema.safeParse(form.getValues());
-        if (!parsedValues.success) {
-            toast({ variant: "destructive", title: "Datos inválidos", description: "Revisá los campos del formulario y volvé a calcular." });
-            return false;
-        }
-        const v = parsedValues.data;
-        // Same client + printer + inputs + result => already registered; don't insert a duplicate row
-        const signature = JSON.stringify([clientName.trim(), selectedPrinterId, v, results.sellingPrice]);
-        if (lastSavedQuotationRef.current === signature) {
-            toast({ title: "Cotización ya registrada", description: "Esta cotización ya figura en el historial." });
-            return true;
-        }
-        setSavingQuotation(true);
-        const internalBreakdown = {
-            material_cost: results.materialCost,
-            electricity_cost: results.electricityCost,
-            depreciation_cost: results.depreciationCost,
-            error_margin_cost: results.errorMarginCost,
-            additional_costs: results.suppliesCost,
-            production_cost_total: results.totalCostWithSupplies,
-            net_profit: results.profitAmount,
-            mercado_libre_price: results.mercadoLibrePrice,
-            cost_per_unit: results.costPerUnit,
-            selling_price_per_unit: results.sellingPricePerUnit,
-        };
-        const { error } = await supabase.from("quotations").insert({
-            user_id: user.id,
-            user_name: user.user_metadata?.full_name || user.email || "Desconocido",
-            user_email: user.email,
-            client_name: clientName.trim(),
-            printer_id: selectedPrinterId,
-            printer_name: selectedPrinter?.name || "Sin impresora",
-            material_used: v.materialUsed, print_weight_grams: v.printWeightGrams,
-            print_time_hours: v.printTimeHours, print_time_minutes: v.printTimeMinutes,
-            quantity: v.quantity, extra_costs: v.extraCosts, profit_multiplier: v.profitMultiplier,
-            total_cost: results.totalCostWithSupplies, selling_price: results.sellingPrice, status: "pendiente",
-            notes: JSON.stringify(internalBreakdown),
-        });
-        setSavingQuotation(false);
-        if (error) {
-            console.error("Error al guardar la cotización:", error);
-            toast({ variant: "destructive", title: "No se pudo guardar la cotización", description: error.message });
-            return false;
-        }
-        lastSavedQuotationRef.current = signature;
-        toast({ title: "Cotización guardada", description: "Se registró en el historial." });
-        return true;
-    }, [results, clientName, user, form, selectedPrinterId, selectedPrinter, toast]);
+  const downloadPdf = async () => {
+    if (!results || finalPrice === null) return
+    try {
+      const doc = await buildQuotationPdf({
+        clientName: draft.clientName.trim(),
+        clientContact: draft.clientContact.trim() || undefined,
+        pieceName: draft.pieceName.trim() || undefined,
+        materialUsed: parsed.success ? parsed.data.materialUsed : undefined,
+        printerName: selectedPrinter?.name,
+        quantity: results.quantity,
+        finalPrice,
+        pricePerUnit: finalPrice / results.quantity,
+        validUntil: draft.validUntil || undefined,
+        business: businessInfo,
+      }, await loadLogoDataUrl())
+      doc.save(quotationFileName(draft.clientName, draft.pieceName))
+    } catch (error) {
+      console.error("Error al generar el PDF:", error)
+      toast({ variant: "destructive", title: "No se pudo generar el PDF", description: error instanceof Error ? error.message : undefined })
+    }
+  }
 
-    const handleExportToPdf = async () => {
-        if (!results || !clientName.trim()) return;
-        await saveQuotationToDb();
-        const { default: jsPDF } = await import('jspdf');
-        const { autoTable } = await import('jspdf-autotable');
-        const doc = new jsPDF();
+  const handleSave = async (alsoPdf: boolean) => {
+    const ok = await saveQuotation()
+    if (ok && alsoPdf) await downloadPdf()
+  }
 
-        try {
-          const logoRes = await fetch('/logo.png');
-          const logoBlob = await logoRes.blob();
-          const logoBase64 = await new Promise<string>((r) => { const reader = new FileReader(); reader.onloadend = () => r(reader.result as string); reader.readAsDataURL(logoBlob); });
-          doc.addImage(logoBase64, 'PNG', 14, 8, 28, 28);
-        } catch { /**/ }
+  // ---- misc handlers ------------------------------------------------------------------------------------------
+  const handlePrinterChange = (id: string) => {
+    setSelectedPrinterId(id)
+    try { localStorage.setItem(PRINTER_KEY, id) } catch { /* storage unavailable */ }
+  }
 
-        doc.setFontSize(22); doc.setFont("helvetica", "bold"); doc.text("COTIZACIÓN", 48, 22);
-        doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.setTextColor(100, 80, 160); doc.text("Doji Print - Impresiones 3D", 48, 30); doc.setTextColor(0, 0, 0);
-        doc.setFontSize(11); doc.setFont("helvetica", "bold"); doc.text(businessInfo.businessName, 140, 18);
-        doc.setFontSize(9); doc.setFont("helvetica", "normal");
-        let infoY = 24;
-        if (businessInfo.cuit) { doc.text(`CUIT: ${businessInfo.cuit}`, 140, infoY); infoY += 5; }
-        if (businessInfo.address) { doc.text(businessInfo.address, 140, infoY); infoY += 5; }
-        if (businessInfo.phone) { doc.text(`Tel: ${businessInfo.phone}`, 140, infoY); }
-        doc.line(14, 42, 196, 42);
-        doc.setFontSize(12); doc.text(`Fecha: ${new Date().toLocaleDateString('es-AR')}`, 140, 52); doc.text(`Cliente: ${clientName}`, 14, 52);
-        let startY = 60;
-        if (selectedPrinter) { doc.setFontSize(9); doc.text(`Impresora: ${selectedPrinter.name}`, 14, 58); startY = 64; }
+  const clearPiece = () => {
+    // The weight is left empty on purpose: a fresh quotation shows no price until it is filled in
+    form.setValue("printWeightGrams", "" as unknown as number, { shouldValidate: false })
+    form.setValue("printTimeHours", 0)
+    form.setValue("printTimeMinutes", 0)
+    form.setValue("quantity", 1)
+    form.setValue("extraCosts", 0)
+    setDraft(emptyDraft())
+    setSavedSignature(null)
+  }
 
-        const tableData: string[][] = [
-            ['Servicio de impresión 3D personalizado', '', formatCurrency(results.sellingPrice)],
-        ];
-        if (results.quantity > 1) {
-            tableData.push(['Cantidad', `${results.quantity} unidades`, '']);
-            tableData.push(['Precio por unidad', '', formatCurrency(results.sellingPricePerUnit)]);
-        }
+  const startNew = () => {
+    clearPiece()
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
 
-        autoTable(doc, { startY, head: [['Servicio', 'Detalle', 'Total']], body: tableData, theme: 'striped', headStyles: { fillColor: [30, 16, 84] } });
-        const finalY = doc.lastAutoTable.finalY || 100;
-        doc.setFontSize(14); doc.setFont("helvetica", "bold"); doc.text("TOTAL SERVICIO:", 140, finalY + 20, { align: 'right' }); doc.text(formatCurrency(results.sellingPrice), 196, finalY + 20, { align: 'right' });
-        doc.setFontSize(9); doc.setFont("helvetica", "normal"); doc.text("Cotización comercial: no incluye desglose de costos internos.", 14, finalY + 28);
-        const pageH = doc.internal.pageSize.height;
-        doc.line(14, pageH - 20, 196, pageH - 20); doc.setFontSize(8); doc.text("Documento no válido como comprobante fiscal. Válido por 7 días.", 105, pageH - 15, { align: 'center' });
-        doc.save(`Cotizacion-${clientName.replace(/\s/g, '_') || 'Cliente'}.pdf`);
-    };
+  const saveBusinessInfo = (info: BusinessInfo) => {
+    setBusinessInfo(info)
+    try { localStorage.setItem(BUSINESS_INFO_KEY, JSON.stringify(info)) } catch { /* storage unavailable */ }
+    setBusinessOpen(false)
+    toast({ title: "Datos guardados" })
+  }
 
-    const profitMultiplier = form.watch("profitMultiplier");
+  const goToSave = () => document.getElementById("guardar")?.scrollIntoView({ behavior: "smooth", block: "start" })
 
-    return (
-        <div className="w-full max-w-7xl mx-auto">
-            <Form {...form}>
-                <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-8">
-                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-                        <div className="space-y-6">
-                            <Card className="border-primary/30">
-                                <CardHeader className="pb-3">
-                                    <CardTitle className="text-xl text-primary flex items-center gap-2"><Printer className="h-5 w-5" /> Impresora</CardTitle>
-                                    <CardDescription>Seleccioná la impresora para cargar sus valores</CardDescription>
-                                </CardHeader>
-                                <CardContent>
-                                    {printers.length > 0 ? (
-                                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                                            {printers.map((p) => (
-                                                <Button key={p.id} type="button" variant={selectedPrinterId === p.id ? "default" : "outline"} className="h-auto py-3 flex-col gap-1" onClick={() => handlePrinterChange(p.id)}>
-                                                    <span className="font-bold text-sm">{p.name}</span>
-                                                    <span className="text-[10px] opacity-70">{p.printer_power}W · {formatCurrency(p.printer_cost)}</span>
-                                                </Button>
-                                            ))}
-                                        </div>
-                                    ) : <p className="text-sm text-muted-foreground">Cargando impresoras...</p>}
-                                </CardContent>
-                            </Card>
-                            <Card>
-                                <CardHeader>
-                                    <div className="flex items-center justify-between">
-                                        <CardTitle className="text-xl text-primary">Gastos Fijos</CardTitle>
-                                        {syncingPresets && <span className="flex items-center gap-1.5 text-xs text-muted-foreground"><CloudUpload className="h-3.5 w-3.5 animate-pulse" /> Sincronizando...</span>}
-                                    </div>
-                                    <CardDescription>Costos de {selectedPrinter?.name || "tu impresora"} y servicios — compartidos para todos los usuarios</CardDescription>
-                                </CardHeader>
-                                <CardContent className="space-y-4">
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                      <FormField control={form.control} name="filamentCostPerKg" render={({ field }) => ( <FormItem><FormLabel>Costo Filamento (kg)</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                      <FormField control={form.control} name="materialUsed" render={({ field }) => ( <FormItem><FormLabel>Tipo de Material</FormLabel><FormControl><Input placeholder="Ej: PLA, PETG" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    </div>
-                                    <FormField control={form.control} name="electricityCostKwh" render={({ field }) => ( <FormItem><FormLabel>Costo Electricidad (Kwh)</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        <FormField control={form.control} name="printerPower" render={({ field }) => ( <FormItem><FormLabel>Consumo (Watts)</FormLabel><FormControl><Input type="number" step="any" placeholder="Watts" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                        <FormField control={form.control} name="printerLifespan" render={({ field }) => ( <FormItem><FormLabel>Vida Útil (horas)</FormLabel><FormControl><Input type="number" step="any" placeholder="Horas" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        <FormField control={form.control} name="printerCost" render={({ field }) => ( <FormItem><FormLabel>Costo Impresora</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                        <FormField control={form.control} name="failureRatePercent" render={({ field }) => ( <FormItem><FormLabel>Tasa de Fallos (%)</FormLabel><FormControl><Input type="number" step="any" placeholder="%" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    </div>
-                                </CardContent>
-                            </Card>
-                            <Card>
-                                <CardHeader><CardTitle className="text-xl text-primary">Costos de Pieza</CardTitle><CardDescription>Datos específicos de esta impresión</CardDescription></CardHeader>
-                                <CardContent className="space-y-4">
-                                    <FormLabel>Tiempo de impresión</FormLabel>
-                                    <div className="grid grid-cols-2 gap-4">
-                                        <FormField control={form.control} name="printTimeHours" render={({ field }) => ( <FormItem><FormLabel className="text-xs text-muted-foreground">Horas</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                        <FormField control={form.control} name="printTimeMinutes" render={({ field }) => ( <FormItem><FormLabel className="text-xs text-muted-foreground">Minutos</FormLabel><FormControl><Input type="number" step="any" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    </div>
-                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                        <FormField control={form.control} name="printWeightGrams" render={({ field }) => ( <FormItem><FormLabel>Peso de la Pieza (gramos)</FormLabel><FormControl><Input type="number" step="any" placeholder="Gramos" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                        <FormField control={form.control} name="quantity" render={({ field }) => ( <FormItem><FormLabel className="flex items-center gap-1.5"><Package className="h-3.5 w-3.5" /> Cantidad</FormLabel><FormControl><Input type="number" min={1} step={1} placeholder="1" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                    </div>
-                                    <FormField control={form.control} name="extraCosts" render={({ field }) => ( <FormItem><FormLabel>Costos Adicionales (pintura, pegamento, etc.)</FormLabel><FormControl><Input type="number" step="any" placeholder="ARS $" {...field} /></FormControl><FormMessage /></FormItem> )} />
-                                </CardContent>
-                            </Card>
-                            <Card>
-                                <CardHeader><CardTitle className="text-xl text-primary">Ganancia</CardTitle><CardDescription>Definí tu margen de ganancia</CardDescription></CardHeader>
-                                <CardContent className="space-y-4">
-                                    <FormField control={form.control} name="profitMultiplier" render={({ field }) => (
-                                        <FormItem>
-                                            <FormLabel>Multiplicador: <span className="text-primary text-lg font-bold">x{profitMultiplier}</span></FormLabel>
-                                            <FormControl><Slider min={1} max={10} step={0.5} value={[field.value]} onValueChange={(val) => field.onChange(val[0])} /></FormControl>
-                                            <div className="flex justify-between text-xs text-muted-foreground pt-1"><span>x1 (sin ganancia)</span><span>x10</span></div>
-                                            <div className="grid grid-cols-3 gap-2 pt-3">
-                                                {[{ label: "Mayorista", value: 3 },{ label: "Minorista", value: 4 },{ label: "Premium", value: 5 }].map((preset) => (
-                                                    <Button key={preset.value} type="button" variant={profitMultiplier === preset.value ? "default" : "outline"} size="sm" className="flex-col h-auto py-2" onClick={() => field.onChange(preset.value)}>
-                                                        <span className="font-bold">x{preset.value}</span><span className="text-[10px] opacity-70">{preset.label}</span>
-                                                    </Button>
-                                                ))}
-                                            </div>
-                                            <FormMessage />
-                                        </FormItem>
-                                    )} />
-                                </CardContent>
-                            </Card>
-                            <div className="flex gap-3 justify-center pt-2">
-                                <Button type="submit" size="lg" className="flex-1 md:flex-none"><Calculator className="mr-2 h-5 w-5" /> Calcular</Button>
-                                <Button type="button" variant="outline" size="lg" onClick={handleReset}><RotateCcw className="mr-2 h-4 w-4" /> Resetear</Button>
-                                <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-                                    <DialogTrigger asChild><Button type="button" variant="outline" size="lg"><Settings className="h-4 w-4" /></Button></DialogTrigger>
-                                    <BusinessInfoDialog businessInfo={businessInfo} onSave={handleSaveBusinessInfo} />
-                                </Dialog>
-                            </div>
-                        </div>
+  // Hide the phone bar while the save section is on screen
+  useEffect(() => {
+    const el = document.getElementById("guardar")
+    if (!el || typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver(([entry]) => setSaveSectionVisible(entry.isIntersecting), { threshold: 0.3 })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [])
 
-                        <div className="lg:sticky top-8 space-y-6">
-                           {results ? (<>
-                               <Card className="shadow-lg">
-                                   <CardHeader>
-                                       <div className="flex items-center gap-3"><BarChart3 className="w-6 h-6 text-primary" /><div><CardTitle>Resultados</CardTitle><CardDescription>{selectedPrinter ? `${selectedPrinter.name} · ` : ""}Desglose de costos y precio.</CardDescription></div></div>
-                                   </CardHeader>
-                                   <CardContent className="space-y-2">
-                                       <ResultRow label="Costo de Material" value={results.materialCost}/>
-                                       <ResultRow label="Costo de Electricidad" value={results.electricityCost}/>
-                                       <ResultRow label="Amortización de Máquina" value={results.depreciationCost}/>
-                                       <ResultRow label="Margen de Error" value={results.errorMarginCost}/>
-                                       <ResultRow label="Costos Adicionales" value={results.suppliesCost}/>
-                                       <Separator className="my-3 bg-border/50"/>
-                                       <ResultRow label="Costo de Producción Total" value={results.totalCostWithSupplies} isBold/>
-                                       <Separator className="my-3 bg-border/50"/>
-                                       <ResultRow label="Precio de Venta" value={results.sellingPrice} className="text-2xl text-primary" isBold/>
-                                       <ResultRow label="Ganancia Neta" value={results.profitAmount} className="text-lg text-green-400" isBold/>
-                                       <ResultRow label="Precio MercadoLibre (comisión 16%)" value={results.mercadoLibrePrice} className="text-lg text-yellow-400" isBold/>
-                                       {results.quantity > 1 && (<><Separator className="my-3 bg-border/50"/><div className="bg-secondary/50 rounded-lg p-3 space-y-1"><p className="text-xs text-muted-foreground font-medium">Precio por unidad ({results.quantity} uds)</p><ResultRow label="Costo/unidad" value={results.costPerUnit}/><ResultRow label="Precio/unidad" value={results.sellingPricePerUnit} isBold className="text-primary"/></div></>)}
-                                   </CardContent>
-                                   <CardFooter className="flex-col items-stretch gap-4 pt-4 border-t border-border/50">
-                                      <Input id="clientName" value={clientName} onChange={(e) => setClientName(e.target.value)} placeholder="Nombre del cliente para la cotización" />
-                                      <div className="flex gap-2">
-                                          <Button type="button" onClick={handleExportToPdf} disabled={!results || !clientName.trim() || savingQuotation} className="flex-1">
-                                              {savingQuotation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <FileText className="mr-2 h-5 w-5" />} Exportar PDF + Guardar
-                                          </Button>
-                                          <Button type="button" variant="outline" onClick={saveQuotationToDb} disabled={!results || !clientName.trim() || savingQuotation} title="Solo guardar sin PDF">
-                                              <Save className="h-4 w-4" />
-                                          </Button>
-                                      </div>
-                                  </CardFooter>
-                               </Card>
-                               {chartData.length > 0 && (
-                                   <Card className="shadow-lg">
-                                       <CardHeader><div className="flex items-center gap-3"><PieChartIcon className="w-5 h-5 text-primary" /><CardTitle className="text-lg">Distribución de Costos</CardTitle></div></CardHeader>
-                                       <CardContent>
-                                           <ResponsiveContainer width="100%" height={260}>
-                                               <PieChart><Pie data={chartData} cx="50%" cy="50%" innerRadius={55} outerRadius={90} paddingAngle={3} dataKey="value" label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`} labelLine={false}>{chartData.map((_, i) => <Cell key={`c-${i}`} fill={CHART_COLORS[i % CHART_COLORS.length]} />)}</Pie><RechartsTooltip formatter={(v: number) => formatCurrency(v)} contentStyle={{ backgroundColor: 'hsl(252,45%,13%)', border: '1px solid hsl(252,30%,22%)', borderRadius: '8px' }} itemStyle={{ color: 'hsl(0,0%,98%)' }} /><Legend /></PieChart>
-                                           </ResponsiveContainer>
-                                       </CardContent>
-                                   </Card>
-                               )}
-                           </>) : (
-                            <Card className="shadow-lg flex items-center justify-center h-full min-h-[300px] bg-card/50 border-dashed">
-                                <div className="text-center text-muted-foreground p-4"><Calculator className="mx-auto h-12 w-12 mb-4" /><p className="font-semibold text-lg">Esperando cálculo...</p><p>Completá los datos y hacé clic en &apos;Calcular&apos;.</p></div>
-                            </Card>
-                           )}
-                        </div>
-                    </div>
-                </form>
-            </Form>
-        </div>
-    );
-}
+  const margin = results ? marginPercent(results.sellingPrice, results.totalCostWithSupplies) : 0
 
-function BusinessInfoDialog({ businessInfo, onSave }: { businessInfo: BusinessInfo; onSave: (info: BusinessInfo) => void }) {
-    const [info, setInfo] = useState(businessInfo);
-    useEffect(() => { setInfo(businessInfo); }, [businessInfo]);
-    return (
-        <DialogContent className="sm:max-w-[425px]">
-            <DialogHeader><DialogTitle>Datos del Negocio</DialogTitle><DialogDescription>Estos datos aparecerán en las cotizaciones PDF.</DialogDescription></DialogHeader>
-            <div className="space-y-4 py-4">
-                <div className="space-y-2"><Label htmlFor="businessName">Nombre del Emprendimiento</Label><Input id="businessName" value={info.businessName} onChange={(e) => setInfo({ ...info, businessName: e.target.value })} /></div>
-                <div className="space-y-2"><Label htmlFor="cuit">CUIT (opcional)</Label><Input id="cuit" placeholder="XX-XXXXXXXX-X" value={info.cuit} onChange={(e) => setInfo({ ...info, cuit: e.target.value })} /></div>
-                <div className="space-y-2"><Label htmlFor="address">Dirección (opcional)</Label><Input id="address" placeholder="Tu dirección" value={info.address} onChange={(e) => setInfo({ ...info, address: e.target.value })} /></div>
-                <div className="space-y-2"><Label htmlFor="phone">Teléfono (opcional)</Label><Input id="phone" placeholder="Tu teléfono" value={info.phone} onChange={(e) => setInfo({ ...info, phone: e.target.value })} /></div>
-            </div>
-            <DialogFooter><Button onClick={() => onSave(info)}>Guardar</Button></DialogFooter>
-        </DialogContent>
-    );
-}
+  return (
+    <div className="mx-auto w-full max-w-6xl pb-28 lg:pb-0">
+      <Form {...form}>
+        {/* Phone: printer, piece, price, save. Desktop: inputs and saving on the left, the price always in view on the right. */}
+        <form onSubmit={(e) => e.preventDefault()} className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:gap-x-6">
+          <div className="space-y-4 lg:col-start-1">
+            <PrinterStrip
+              form={form}
+              printers={printers}
+              loading={printersLoading}
+              selectedId={selectedPrinterId}
+              onSelect={handlePrinterChange}
+              changedCount={changedCount}
+              saving={savingPresets}
+              onSave={savePresets}
+              onDiscard={discardPresets}
+            />
+            <PieceFields form={form} onClear={clearPiece} />
+          </div>
 
-const formatCurrency = (v: number) => new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(v || 0);
+          <aside className="rounded-lg border bg-card p-5 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+            <PricePanel
+              results={results}
+              multiplier={multiplier}
+              printTimeHours={parsed.success ? parsed.data.printTimeHours : Number(watched.printTimeHours) || 0}
+              printTimeMinutes={parsed.success ? parsed.data.printTimeMinutes : Number(watched.printTimeMinutes) || 0}
+              onMultiplierChange={(m) => form.setValue("profitMultiplier", m, { shouldValidate: true })}
+            />
+          </aside>
 
-const ResultRow = ({ label, value, isBold = false, className = "" }: { label: string; value: number; isBold?: boolean; className?: string }) => (
-    <div className={cn("flex justify-between items-baseline", isBold ? "font-bold" : "", className)}>
-        <p className={cn("text-sm", isBold ? "" : "text-muted-foreground")}>{label}</p>
-        <p className="font-mono tracking-tight">{formatCurrency(value)}</p>
+          <div className="rounded-lg border bg-card p-5 lg:col-start-1">
+            <SaveQuote
+              results={results}
+              draft={draft}
+              onDraftChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              businessName={businessInfo.businessName}
+              onEditBusiness={() => setBusinessOpen(true)}
+              saving={savingQuotation}
+              saved={saved}
+              onSave={handleSave}
+              onPdfOnly={downloadPdf}
+              onGoToRegistry={() => onNavigate?.("registry")}
+              onNew={startNew}
+            />
+          </div>
+        </form>
+      </Form>
+
+      {results && !saveSectionVisible && <MobileSummaryBar price={results.sellingPrice} margin={margin} onSave={goToSave} />}
+      <BusinessInfoDialog open={businessOpen} onOpenChange={setBusinessOpen} businessInfo={businessInfo} onSave={saveBusinessInfo} />
     </div>
-);
+  )
+}
+
+/** The six shared printer values as form values */
+function presetValuesOf(printer: Printer): Pick<CalculatorFormValues, PresetField> {
+  const values = {} as Record<string, number>
+  const columns = PRESET_COLUMNS as Record<string, keyof Printer>
+  for (const [field, column] of Object.entries(columns)) values[field] = Number(printer[column])
+  return values as Pick<CalculatorFormValues, PresetField>
+}

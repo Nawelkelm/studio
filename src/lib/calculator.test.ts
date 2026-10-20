@@ -5,6 +5,12 @@ import {
   getPresetUpdates,
   isPresetField,
   MERCADOLIBRE_FEE_RATE,
+  MAX_MULTIPLIER,
+  MIN_MULTIPLIER,
+  calculateLive,
+  marginPercent,
+  multiplierForPrice,
+  profitPerHour,
   toCalculationSnapshot,
   type CalculatorFormValues,
 } from "./calculator";
@@ -76,6 +82,54 @@ describe("calculateResults", () => {
   it("a x1 multiplier yields zero profit", () => {
     const r = calculateResults({ ...baseValues, profitMultiplier: 1 });
     expect(r.profitAmount).toBeCloseTo(0);
+  });
+});
+
+describe("calculateLive", () => {
+  it("matches calculateResults when every number is valid", () => {
+    const live = calculateLive(baseValues);
+    expect(live).toEqual(calculateResults(baseValues));
+  });
+
+  it("accepts the raw strings that react-hook-form yields while typing", () => {
+    const raw = { ...baseValues, printWeightGrams: "100", printTimeHours: "2", printTimeMinutes: "30", quantity: "1" };
+    expect(calculateLive(raw)?.sellingPrice).toBeCloseTo(7050);
+  });
+
+  it("returns null while a piece field is empty or invalid instead of using a default", () => {
+    expect(calculateLive({ ...baseValues, printWeightGrams: "" })).toBeNull();
+    expect(calculateLive({ ...baseValues, quantity: "  " })).toBeNull();
+    expect(calculateLive({ ...baseValues, printTimeMinutes: 75 })).toBeNull();
+    expect(calculateLive({ ...baseValues, printWeightGrams: -5 })).toBeNull();
+    expect(calculateLive({ ...baseValues, printWeightGrams: "abc" })).toBeNull();
+    expect(calculateLive({ ...baseValues, profitMultiplier: 0.5 })).toBeNull();
+  });
+
+  it("does not need the material text", () => {
+    expect(calculateLive({ ...baseValues, materialUsed: "" })).not.toBeNull();
+  });
+});
+
+describe("margin, profit per hour and multiplier helpers", () => {
+  it("computes the margin over the selling price", () => {
+    expect(marginPercent(7050, 2350)).toBeCloseTo(66.67, 1);
+    expect(marginPercent(0, 100)).toBe(0);
+    expect(marginPercent(100, 150)).toBeLessThan(0); // selling below cost
+  });
+
+  it("computes profit per printing hour across the whole batch, or null without print time", () => {
+    expect(profitPerHour(4700, 2, 30, 1)).toBeCloseTo(1880);
+    expect(profitPerHour(14100, 2, 30, 3)).toBeCloseTo(1880); // 3 units: 7.5 h
+    expect(profitPerHour(100, 0, 0, 1)).toBeNull();
+  });
+
+  it("finds the multiplier for a target price per unit, clamped to the allowed range", () => {
+    expect(multiplierForPrice(7050, 2350)).toBe(3);
+    expect(multiplierForPrice(8225, 2350)).toBe(3.5);
+    expect(multiplierForPrice(100, 2350)).toBe(MIN_MULTIPLIER);
+    expect(multiplierForPrice(1_000_000, 2350)).toBe(MAX_MULTIPLIER);
+    expect(multiplierForPrice(5000, 0)).toBeNull();
+    expect(multiplierForPrice(NaN, 100)).toBeNull();
   });
 });
 

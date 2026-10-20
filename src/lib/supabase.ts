@@ -73,7 +73,21 @@ export type Quotation = {
   total_cost: number;
   selling_price: number;
   status: "pendiente" | "aprobada" | "rechazada";
+  /** Legacy: JSON string with the cost breakdown (superseded by `snapshot`) */
   notes: string | null;
   created_at: string;
   updated_at: string;
+  // Decision data (migration 20261020_quotation_decision_data.sql)
+  piece_name: string | null;
+  piece_description: string | null;
+  client_contact: string | null;
+  channel: "directo" | "mercadolibre" | "instagram" | "whatsapp" | "otro";
+  /** Price actually quoted to the client; null on quotations created before the migration */
+  final_price: number | null;
+  valid_until: string | null;
+  internal_notes: string | null;
+  /** Inputs and results used when the quotation was made (QuotationSnapshot in quotation-meta.ts) */
+  snapshot: unknown;
+  lost_reason: "caro" | "tardanza" | "arrepentimiento" | "competencia" | "sin_respuesta" | "otro" | null;
+  decided_at: string | null;
 };

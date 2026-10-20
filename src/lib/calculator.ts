@@ -10,12 +10,12 @@ export const calculatorSchema = z.object({
   printerLifespan: z.coerce.number().min(1).default(4320),
   printerCost: z.coerce.number().min(0).default(150000),
   failureRatePercent: z.coerce.number().min(0).max(100).default(30),
-  printTimeHours: z.coerce.number().min(0).default(0),
-  printTimeMinutes: z.coerce.number().min(0).max(59).default(0),
+  printTimeHours: z.coerce.number().int().min(0).default(0),
+  printTimeMinutes: z.coerce.number().int().min(0).max(59).default(0),
   printWeightGrams: z.coerce.number().min(0).default(95),
   extraCosts: z.coerce.number().min(0).default(0),
   profitMultiplier: z.coerce.number().min(1).max(10).default(5),
-  quantity: z.coerce.number().min(1).default(1),
+  quantity: z.coerce.number().int().min(1).default(1),
 });
 
 export type CalculatorFormValues = z.infer<typeof calculatorSchema>;
@@ -80,6 +80,43 @@ export function calculateResults(values: CalculatorFormValues): CalculationResul
     sellingPricePerUnit: sellingPriceUnit,
     quantity,
   };
+}
+
+/**
+ * Live results while the user types. `raw` is the react-hook-form state (strings for edited inputs).
+ * Returns null while any number is empty or out of range, so the UI can keep showing the last valid state.
+ */
+export function calculateLive(raw: Partial<Record<string, unknown>>): CalculationResults | null {
+  const parsed = calculatorSchema.omit({ materialUsed: true }).safeParse(
+    Object.fromEntries(
+      Object.entries(raw).map(([key, value]) => [key, typeof value === "string" && value.trim() === "" ? undefined : value]),
+    ),
+  );
+  // An emptied field would silently become its default; require the user's own values for the piece inputs
+  const required = ["printWeightGrams", "printTimeHours", "printTimeMinutes", "quantity"];
+  if (!parsed.success || required.some((k) => raw[k] === undefined || String(raw[k]).trim() === "")) return null;
+  return calculateResults({ ...parsed.data, materialUsed: "" });
+}
+
+/** Share of the selling price that is profit, 0-100. */
+export function marginPercent(price: number, cost: number): number {
+  return price > 0 ? ((price - cost) / price) * 100 : 0;
+}
+
+/** Profit per hour of printing, or null when the print time is zero. */
+export function profitPerHour(profit: number, printTimeHours: number, printTimeMinutes: number, quantity: number): number | null {
+  const hours = (printTimeHours + printTimeMinutes / 60) * quantity;
+  return hours > 0 ? profit / hours : null;
+}
+
+export const MIN_MULTIPLIER = 1;
+export const MAX_MULTIPLIER = 10;
+
+/** Multiplier that yields `targetPricePerUnit` over `costPerUnit`, clamped to the allowed range (2 decimals). */
+export function multiplierForPrice(targetPricePerUnit: number, costPerUnit: number): number | null {
+  if (!(costPerUnit > 0) || !Number.isFinite(targetPricePerUnit)) return null;
+  const raw = targetPricePerUnit / costPerUnit;
+  return Math.round(Math.min(MAX_MULTIPLIER, Math.max(MIN_MULTIPLIER, raw)) * 100) / 100;
 }
 
 // Fields synced to the Supabase printers table (shared across all users) and their DB columns

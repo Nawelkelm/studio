@@ -2,9 +2,49 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { jsPDF } from "jspdf";
 import { autoTable } from "jspdf-autotable";
+import { buildQuotationPdf, quotationFileName } from "./quotation-pdf";
 
 // Smoke test of the exact jsPDF + jspdf-autotable calls used by the quotation PDFs
 // (calculator-form.tsx and quotation-registry.tsx), to catch breaking library upgrades.
+describe("buildQuotationPdf", () => {
+  const business = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "11-5555-0000" };
+  const base = { clientName: "Cliente Ñandú", quantity: 1, finalPrice: 7050, pricePerUnit: 7050, business };
+  const logo = () => `data:image/png;base64,${readFileSync("public/logo.png").toString("base64")}`;
+  const bytesOf = (doc: { output: (t: "arraybuffer") => ArrayBuffer }) => new Uint8Array(doc.output("arraybuffer"));
+  const header = (bytes: Uint8Array) => String.fromCharCode(...bytes.slice(0, 5));
+
+  it("builds a valid one-page quotation with the minimum data", async () => {
+    const doc = await buildQuotationPdf(base);
+    expect(header(bytesOf(doc))).toBe("%PDF-");
+    expect(doc.getNumberOfPages()).toBe(1);
+  });
+
+  it("builds a complete quotation: logo, piece, contact, printer, batch rows and validity", async () => {
+    const doc = await buildQuotationPdf(
+      { ...base, quantity: 3, finalPrice: 21150, pieceName: "Llavero dragón", materialUsed: "PLA", clientContact: "11-4444-0000",
+        printerName: "Ender 3", validUntil: "2026-11-04", date: new Date(2026, 9, 20) },
+      logo(),
+    );
+    expect(header(bytesOf(doc))).toBe("%PDF-");
+    expect(bytesOf(doc).length).toBeGreaterThan(5000); // includes the embedded logo
+    expect(doc.getNumberOfPages()).toBe(1);
+    expect(doc.lastAutoTable.finalY).toBeGreaterThan(60);
+  });
+
+  it("survives an unreadable logo", async () => {
+    const doc = await buildQuotationPdf(base, "data:image/png;base64,not-an-image");
+    expect(doc.getNumberOfPages()).toBe(1);
+  });
+});
+
+describe("quotationFileName", () => {
+  it("builds a safe file name from the client and the piece", () => {
+    expect(quotationFileName("Juan Pérez")).toBe("Cotizacion-Juan_Pérez.pdf");
+    expect(quotationFileName("  María  ", "Llavero / dragón!")).toBe("Cotizacion-María-Llavero_dragón.pdf");
+    expect(quotationFileName("   ")).toBe("Cotizacion-Cliente.pdf");
+  });
+});
+
 describe("quotation PDF generation", () => {
   it("builds a quotation with logo, table and totals", () => {
     const doc = new jsPDF();
