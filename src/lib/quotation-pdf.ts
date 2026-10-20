@@ -4,6 +4,19 @@ import { DEFAULT_VALIDITY_DAYS, formatDateOnly } from "@/lib/quotation-meta";
 
 export type BusinessInfo = { businessName: string; cuit: string; address: string; phone: string };
 
+export const BUSINESS_INFO_KEY = "3d-calculator-business-info";
+export const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" };
+
+/** Business data printed on the PDF; stored in this browser (defaults when missing or corrupt). */
+export function readBusinessInfo(): BusinessInfo {
+  try {
+    const stored = typeof localStorage !== "undefined" ? localStorage.getItem(BUSINESS_INFO_KEY) : null;
+    return stored ? { ...DEFAULT_BUSINESS_INFO, ...JSON.parse(stored) } : DEFAULT_BUSINESS_INFO;
+  } catch {
+    return DEFAULT_BUSINESS_INFO;
+  }
+}
+
 export type QuotationPdfData = {
   clientName: string;
   clientContact?: string;

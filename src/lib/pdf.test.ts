@@ -3,6 +3,9 @@ import { describe, expect, it } from "vitest";
 import { jsPDF } from "jspdf";
 import { autoTable } from "jspdf-autotable";
 import { buildQuotationPdf, quotationFileName } from "./quotation-pdf";
+import { buildRegistryPdf } from "./registry-pdf";
+import { sampleQuotations } from "./quotation-fixtures";
+import { toView } from "./quotation-view";
 
 // Smoke test of the exact jsPDF + jspdf-autotable calls used by the quotation PDFs
 // (calculator-form.tsx and quotation-registry.tsx), to catch breaking library upgrades.
@@ -34,6 +37,24 @@ describe("buildQuotationPdf", () => {
   it("survives an unreadable logo", async () => {
     const doc = await buildQuotationPdf(base, "data:image/png;base64,not-an-image");
     expect(doc.getNumberOfPages()).toBe(1);
+  });
+});
+
+describe("buildRegistryPdf", () => {
+  const views = sampleQuotations().map((q) => toView(q, new Date(2026, 9, 20)));
+
+  it("builds the landscape listing with every quotation", async () => {
+    const doc = await buildRegistryPdf(views, null, new Date(2026, 9, 20, 10));
+    const bytes = new Uint8Array(doc.output("arraybuffer"));
+    expect(String.fromCharCode(...bytes.slice(0, 5))).toBe("%PDF-");
+    expect(doc.internal.pageSize.getWidth()).toBeGreaterThan(doc.internal.pageSize.getHeight());
+    expect(doc.lastAutoTable.finalY).toBeGreaterThan(34);
+  });
+
+  it("paginates long listings and survives an empty one", async () => {
+    const many = Array.from({ length: 120 }, (_, i) => ({ ...views[i % views.length], id: `m${i}` }));
+    expect((await buildRegistryPdf(many)).getNumberOfPages()).toBeGreaterThan(1);
+    expect((await buildRegistryPdf([])).getNumberOfPages()).toBe(1);
   });
 });
 
