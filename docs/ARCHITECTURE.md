@@ -29,7 +29,7 @@ La **seguridad real está en la base de datos** (RLS, permisos por columna, func
 | Contenedores | `quotation-registry.tsx`, `calculator-form.tsx`, `auth-provider.tsx` | Hablan con Supabase y conectan lógica con vistas. |
 | API | `src/app/api/suggest-pricing/route.ts` | Única ruta de servidor (edge). |
 | Base de datos | `supabase/migrations/*.sql` | Versionado del esquema; se aplica a mano. |
-| UI base | `src/components/ui/*` | Componentes shadcn/Radix (varios sin uso, ver §7). |
+| UI base | `src/components/ui/*` | Solo los componentes shadcn/Radix que la app usa. Si hace falta otro: `npx shadcn@latest add <nombre>` (config en `components.json`). |
 
 ### Módulos de `src/lib`
 
@@ -103,5 +103,5 @@ Datos de ejemplo realistas (impresoras Bambu Lab A1/P1S y Snapmaker U1) en `src/
 - El límite de consultas a la IA es **por instancia** del servidor (frena ráfagas, no es una cuota global).
 - Los datos del negocio para el PDF (CUIT, dirección, teléfono) se guardan **en el navegador**, por dispositivo.
 - `useIsMobile` empieza en `false` y puede mostrar un instante el panel lateral antes de pasar a la hoja inferior en celulares.
-- **Código sin uso:** 16 componentes de `components/ui` (accordion, alert, calendar, carousel, chart, checkbox, menubar, popover, progress, radio-group, scroll-area, separator, sidebar, slider, switch, tooltip) y sus dependencias (`date-fns`, `react-day-picker`, `embla-carousel-react` y varios `@radix-ui/*`); `remotePatterns` de `placehold.co` en `next.config.ts`; `docs/blueprint.md` (describe una versión anterior).
+- **Documento desactualizado:** `docs/blueprint.md` describe una versión anterior (colores y funciones que ya no existen); la referencia vigente es [PRODUCT.md](../PRODUCT.md).
 - **Dependencias:** Tailwind 3 (la 4 cambia la configuración y las clases); quedan 6 avisos altos de `npm audit`, todos de herramientas de compilación de Tailwind, no del sitio publicado.
