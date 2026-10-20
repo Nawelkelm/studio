@@ -12,7 +12,9 @@ import {
 } from "@/lib/calculator"
 import { buildSnapshot } from "@/lib/quotation-meta"
 import { emptyDraft, resolveFinalPrice, type QuoteDraft } from "@/lib/quote-draft"
-import { buildQuotationPdf, loadLogoDataUrl, quotationFileName, type BusinessInfo } from "@/lib/quotation-pdf"
+import { BUSINESS_INFO_KEY, DEFAULT_BUSINESS_INFO, buildQuotationPdf, loadLogoDataUrl, quotationFileName, type BusinessInfo } from "@/lib/quotation-pdf"
+import { formatCurrencyWhole } from "@/lib/format"
+import type { QuotePrefill } from "@/lib/quote-prefill"
 import { Form } from "@/components/ui/form"
 import { useToast } from "@/hooks/use-toast"
 import { PrinterStrip } from "@/components/quote/printer-strip"
@@ -22,9 +24,7 @@ import { SaveQuote } from "@/components/quote/save-quote"
 import { MobileSummaryBar } from "@/components/quote/mobile-summary-bar"
 import { BusinessInfoDialog } from "@/components/quote/business-info-dialog"
 
-const BUSINESS_INFO_KEY = "3d-calculator-business-info"
 const PRINTER_KEY = "3d-calc-printer"
-const DEFAULT_BUSINESS_INFO: BusinessInfo = { businessName: "Doji Print - Impresiones 3D", cuit: "", address: "", phone: "" }
 const SNAPSHOT_DEBOUNCE_MS = 400
 
 const pieceStorageKey = (printerId: string | null) => (printerId ? `3d-piece-${printerId}` : "3d-piece-default")
@@ -33,9 +33,11 @@ type Props = {
   /** Fires (debounced) with the latest valid calculation so other tabs can use it */
   onCalculated?: (snapshot: CalculationSnapshot) => void
   onNavigate?: (tab: "registry") => void
+  /** A quotation to start from (duplicated in the registry); applied once per `key` */
+  prefill?: QuotePrefill | null
 }
 
-export default function CalculatorForm({ onCalculated, onNavigate }: Props) {
+export default function CalculatorForm({ onCalculated, onNavigate, prefill }: Props) {
   const { user } = useAuth()
   const { toast } = useToast()
 
@@ -52,6 +54,10 @@ export default function CalculatorForm({ onCalculated, onNavigate }: Props) {
   const [businessInfo, setBusinessInfo] = useState<BusinessInfo>(DEFAULT_BUSINESS_INFO)
   const [businessOpen, setBusinessOpen] = useState(false)
   const [saveSectionVisible, setSaveSectionVisible] = useState(false)
+  // Set while a duplicated quotation waits for its printer to finish loading, and after it was applied
+  const pendingPrefillRef = useRef<QuotePrefill | null>(null)
+  const appliedPrefillKeyRef = useRef<number | null>(null)
+  const [duplicatedFrom, setDuplicatedFrom] = useState<QuotePrefill["original"] | null>(null)
 
   const form = useForm<CalculatorFormValues>({
     resolver: zodResolver(calculatorSchema),
@@ -97,6 +103,8 @@ export default function CalculatorForm({ onCalculated, onNavigate }: Props) {
       const raw = localStorage.getItem(pieceStorageKey(selectedPrinterId))
       if (raw) piece = JSON.parse(raw)
     } catch { localStorage.removeItem(pieceStorageKey(selectedPrinterId)) }
+    // A duplicated quotation wins over what this browser remembered for the printer
+    if (pendingPrefillRef.current) { piece = pendingPrefillRef.current.piece; pendingPrefillRef.current = null }
 
     form.reset({
       ...calculatorSchema.parse({}),
@@ -110,6 +118,25 @@ export default function CalculatorForm({ onCalculated, onNavigate }: Props) {
       ...(piece.profitMultiplier !== undefined && { profitMultiplier: piece.profitMultiplier }),
     })
   }, [selectedPrinterId, printersLoaded, form])
+
+  // Duplicate a quotation: its printer (if it still exists), piece and client data; the costs are today's saved ones
+  useEffect(() => {
+    if (!prefill || appliedPrefillKeyRef.current === prefill.key || printersRef.current.length === 0) return
+    appliedPrefillKeyRef.current = prefill.key
+    const printer = printersRef.current.find((p) => p.id === prefill.printerId)
+    if (printer && printer.id !== selectedPrinterId) {
+      pendingPrefillRef.current = prefill // the selection effect applies the piece
+      setSelectedPrinterId(printer.id)
+      try { localStorage.setItem(PRINTER_KEY, printer.id) } catch { /* storage unavailable */ }
+    } else {
+      const base = printer ?? printersRef.current.find((p) => p.id === selectedPrinterId)
+      form.reset({ ...calculatorSchema.parse({}), ...(base ? presetValuesOf(base) : {}), ...prefill.piece })
+    }
+    setDraft({ ...emptyDraft(), ...prefill.draft })
+    setSavedSignature(null)
+    setDuplicatedFrom(prefill.original)
+    window.scrollTo({ top: 0 })
+  }, [prefill, printersLoaded, selectedPrinterId, form])
 
   // Keep this browser's piece data (the printer values live in the database, not here)
   useEffect(() => {
@@ -284,6 +311,16 @@ export default function CalculatorForm({ onCalculated, onNavigate }: Props) {
 
   return (
     <div className="mx-auto w-full max-w-6xl pb-28 lg:pb-0">
+      {duplicatedFrom && (
+        <div role="status" className="mb-4 flex flex-col gap-2 rounded-lg bg-secondary/60 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <p className="tabular-nums">
+            Duplicada de la cotización de <strong>{duplicatedFrom.clientName}</strong> del {new Date(duplicatedFrom.createdAt).toLocaleDateString("es-AR")}.
+            Se cotizó a <strong>{formatCurrencyWhole(duplicatedFrom.price)}</strong>
+            {results && <> y con los costos de hoy el precio calculado es <strong>{formatCurrencyWhole(results.sellingPrice)}</strong></>}.
+          </p>
+          <button type="button" className="shrink-0 text-xs underline underline-offset-2 text-muted-foreground hover:text-foreground" onClick={() => setDuplicatedFrom(null)}>Ocultar</button>
+        </div>
+      )}
       <Form {...form}>
         {/* Phone: printer, piece, price, save. Desktop: inputs and saving on the left, the price always in view on the right. */}
         <form onSubmit={(e) => e.preventDefault()} className="grid grid-cols-1 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,26rem)] lg:gap-x-6">

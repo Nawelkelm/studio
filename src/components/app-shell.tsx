@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { useAuth } from "@/components/auth-provider";
 import type { CalculationSnapshot } from "@/lib/calculator";
+import type { QuotePrefill } from "@/lib/quote-prefill";
 import { supabase } from "@/lib/supabase";
 import LoginScreen from "@/components/login-screen";
 import AccessScreen from "@/components/access-screen";
@@ -50,6 +51,8 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
   const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [tab, setTab] = useState("calculator");
+  // A quotation chosen in the registry to be duplicated in the calculator
+  const [prefill, setPrefill] = useState<QuotePrefill | null>(null);
 
   // Admins get a badge on the Users tab when someone is waiting for approval
   useEffect(() => {
@@ -131,10 +134,13 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
         {/* Calculator and AI tabs stay mounted (hidden when inactive) so results and typed data survive tab switches.
             The registry and users tabs unmount on purpose: they reload their data every time they are opened. */}
         <TabsContent value="calculator" forceMount className="data-[state=inactive]:hidden">
-          <CalculatorForm onCalculated={setCalculation} onNavigate={setTab} />
+          <CalculatorForm onCalculated={setCalculation} onNavigate={setTab} prefill={prefill} />
         </TabsContent>
         <TabsContent value="registry">
-          <QuotationRegistry />
+          <QuotationRegistry
+            onDuplicate={(p) => { setPrefill(p); setTab("calculator"); }}
+            onGoToCalculator={() => setTab("calculator")}
+          />
         </TabsContent>
         <TabsContent value="ai" forceMount className="data-[state=inactive]:hidden">
           <div className="max-w-2xl mx-auto">
