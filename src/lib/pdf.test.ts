@@ -22,7 +22,7 @@ describe("buildQuotationPdf", () => {
   it("builds a complete quotation: logo, piece, contact, printer, batch rows and validity", async () => {
     const doc = await buildQuotationPdf(
       { ...base, quantity: 3, finalPrice: 21150, pieceName: "Llavero dragón", materialUsed: "PLA", clientContact: "11-4444-0000",
-        printerName: "Ender 3", validUntil: "2026-11-04", date: new Date(2026, 9, 20) },
+        printerName: "Bambu Lab A1", validUntil: "2026-11-04", date: new Date(2026, 9, 20) },
       logo(),
     );
     expect(header(bytesOf(doc))).toBe("%PDF-");

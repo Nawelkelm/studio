@@ -63,7 +63,7 @@ const BASE_SCHEMA = `
     ('${ADMIN.sub}', '${ADMIN.email}', now()),
     ('${OLD_ACCOUNT.sub}', '${OLD_ACCOUNT.email}', now());
   insert into public.printers (id, name, filament_cost_per_kg, electricity_cost_kwh, printer_power, printer_lifespan, printer_cost, failure_rate_percent)
-    values ('${PRINTER_ID}', 'Ender 3', 15000, 140, 120, 4320, 150000, 30);
+    values ('${PRINTER_ID}', 'Bambu Lab A1', 15000, 140, 120, 4320, 150000, 30);
   insert into public.quotations (user_id, client_name, selling_price, total_cost, status)
     values ('${ADMIN.sub}', 'Cliente existente', 10000, 4000, 'aprobada'),
            ('${ADMIN.sub}', 'Cliente pendiente', 5000, 2000, 'pendiente');

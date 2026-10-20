@@ -56,8 +56,8 @@ describe("prices", () => {
 describe("buildSnapshot", () => {
   it("keeps the inputs, results and printer so the numbers can be explained later", () => {
     const results = calculateResults(inputs);
-    const snapshot = buildSnapshot(inputs, results, { id: "p1", name: "Ender 3" });
-    expect(snapshot).toEqual({ v: 1, inputs, results, printer: { id: "p1", name: "Ender 3" } });
+    const snapshot = buildSnapshot(inputs, results, { id: "p1", name: "Bambu Lab A1" });
+    expect(snapshot).toEqual({ v: 1, inputs, results, printer: { id: "p1", name: "Bambu Lab A1" } });
     expect(JSON.parse(JSON.stringify(snapshot))).toEqual(snapshot); // safe to store as jsonb
   });
 });

@@ -34,7 +34,7 @@ const baseValues: CalculatorFormValues = {
 
 const printer: Printer = {
   id: "printer-1",
-  name: "Ender 3",
+  name: "Bambu Lab A1",
   filament_cost_per_kg: 15000,
   electricity_cost_kwh: 140,
   printer_power: 120,

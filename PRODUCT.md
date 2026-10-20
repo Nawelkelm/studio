@@ -29,6 +29,7 @@ Inferred from the code, not confirmed by the user: costs are computed from the s
 - Quoting happens with a customer waiting (chat, marketplace, in person) and also at a desk with time to spare.
 - The PDF the customer receives must show a single commercial service line and total; internal costs never appear on it. The internal breakdown stays in the quotation record (`quotations.notes`).
 - Access is controlled by administrators: new accounts wait for approval; roles are admin and user.
+- The shop's printers are the **Bambu Lab A1**, the **Bambu Lab P1S** and (newly added) the **Snapmaker U1**. They do not own an Ender 3: examples and fixtures must use these.
 - Printer values (filament cost per kg, electricity, power, lifespan, price, failure rate) are shared by every active user, and every active user may edit them (confirmed decision).
 - Database changes go through versioned, tested migrations in `supabase/migrations/`.
 
