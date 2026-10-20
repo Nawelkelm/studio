@@ -7,8 +7,8 @@ import { zodResolver } from "@hookform/resolvers/zod"
 import { supabase, type Printer } from "@/lib/supabase"
 import { useAuth } from "@/components/auth-provider"
 import {
-  calculateLive, calculatorSchema, getPresetUpdates, marginPercent, toCalculationSnapshot,
-  type CalculationSnapshot, type CalculatorFormValues, PRESET_COLUMNS, type PresetField,
+  MAX_MULTIPLIER, calculateLive, calculatorSchema, getPresetUpdates, marginPercent, multiplierForPrice,
+  type CalculatorFormValues, PRESET_COLUMNS, type PresetField,
 } from "@/lib/calculator"
 import { buildSnapshot } from "@/lib/quotation-meta"
 import { emptyDraft, resolveFinalPrice, type QuoteDraft } from "@/lib/quote-draft"
@@ -21,23 +21,21 @@ import { PrinterStrip } from "@/components/quote/printer-strip"
 import { PieceFields } from "@/components/quote/piece-fields"
 import { PricePanel } from "@/components/quote/price-panel"
 import { SaveQuote } from "@/components/quote/save-quote"
+import { PriceAdvisor } from "@/components/ai-pricing-assistant"
 import { MobileSummaryBar } from "@/components/quote/mobile-summary-bar"
 import { BusinessInfoDialog } from "@/components/quote/business-info-dialog"
 
 const PRINTER_KEY = "3d-calc-printer"
-const SNAPSHOT_DEBOUNCE_MS = 400
 
 const pieceStorageKey = (printerId: string | null) => (printerId ? `3d-piece-${printerId}` : "3d-piece-default")
 
 type Props = {
-  /** Fires (debounced) with the latest valid calculation so other tabs can use it */
-  onCalculated?: (snapshot: CalculationSnapshot) => void
   onNavigate?: (tab: "registry") => void
   /** A quotation to start from (duplicated in the registry); applied once per `key` */
   prefill?: QuotePrefill | null
 }
 
-export default function CalculatorForm({ onCalculated, onNavigate, prefill }: Props) {
+export default function CalculatorForm({ onNavigate, prefill }: Props) {
   const { user } = useAuth()
   const { toast } = useToast()
 
@@ -186,12 +184,18 @@ export default function CalculatorForm({ onCalculated, onNavigate, prefill }: Pr
     }
   }
 
-  // ---- hand the live calculation to the AI tab -------------------------------------------------------------
-  useEffect(() => {
-    if (!results || !parsed.success || !onCalculated) return
-    const timer = setTimeout(() => onCalculated(toCalculationSnapshot(parsed.data, results)), SNAPSHOT_DEBOUNCE_MS)
-    return () => clearTimeout(timer)
-  }, [results, parsed, onCalculated])
+  // ---- apply a price suggested by the AI advisor -------------------------------------------------------------
+  const applyPrice = (pricePerUnit: number) => {
+    if (!results) return
+    const next = multiplierForPrice(pricePerUnit, results.costPerUnit)
+    if (next === null) return
+    form.setValue("profitMultiplier", next, { shouldValidate: true })
+    if (pricePerUnit > results.costPerUnit * MAX_MULTIPLIER) {
+      toast({ title: "Multiplicador al máximo", description: `El tope es x${MAX_MULTIPLIER}: el precio quedó en ${formatCurrencyWhole(results.costPerUnit * MAX_MULTIPLIER)} por unidad.` })
+    } else {
+      toast({ title: "Precio aplicado", description: `${formatCurrencyWhole(pricePerUnit)} por unidad (x${Number(next.toFixed(2))}).` })
+    }
+  }
 
   // ---- saving the quotation ---------------------------------------------------------------------------------
   const finalPrice = results ? resolveFinalPrice(draft, results.sellingPrice) : null
@@ -339,7 +343,7 @@ export default function CalculatorForm({ onCalculated, onNavigate, prefill }: Pr
             <PieceFields form={form} onClear={clearPiece} />
           </div>
 
-          <aside className="rounded-lg border bg-card p-5 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
+          <aside className="rounded-lg border bg-card p-5 lg:col-start-2 lg:row-span-3 lg:row-start-1 lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:overflow-y-auto">
             <PricePanel
               results={results}
               multiplier={multiplier}
@@ -348,6 +352,16 @@ export default function CalculatorForm({ onCalculated, onNavigate, prefill }: Pr
               onMultiplierChange={(m) => form.setValue("profitMultiplier", m, { shouldValidate: true })}
             />
           </aside>
+
+          <div className="lg:col-start-1">
+            <PriceAdvisor
+              results={results}
+              values={parsed.success ? parsed.data : null}
+              draft={draft}
+              onDraftChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+              onApplyPrice={applyPrice}
+            />
+          </div>
 
           <div className="rounded-lg border bg-card p-5 lg:col-start-1">
             <SaveQuote

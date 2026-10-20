@@ -36,7 +36,7 @@ Inferred from the code, not confirmed by the user: costs are computed from the s
 ## Capabilities and Constraints
 
 - Stack: Next.js 15 (App Router), React 18, Tailwind CSS 3, shadcn/ui on Radix, recharts, jsPDF; Supabase (Google login, Postgres with RLS); deployed on Vercel from the `3D-Print-Profit` branch (every push to it deploys to production).
-- Today: calculator with printer selection, batch quantity, profit multiplier, MercadoLibre price; quotation registry with status (pendiente / aprobada / rechazada), monthly sales dashboard; AI price assistant (Gemini) that can use the last calculation; admin panel for users.
+- Today: calculator with printer selection, batch quantity, profit multiplier, MercadoLibre price; quotation registry with status (pendiente / aprobada / rechazada), monthly sales dashboard; AI price advisor inside the quoting screen (Gemini: price range per unit grounded in the real cost and in the shop's closed quotations, sent without client names; one tap applies a price); admin panel for users.
 - The calculator should show results **live while typing** (confirmed preference), without a Calcular button.
 - Language: Spanish (Argentina), voseo, currency ARS.
 - Open decisions: exact set of new fields to store (see Product Purpose for the decisions they must serve); whether the incumbent look is to be kept or replaced (not discussed).

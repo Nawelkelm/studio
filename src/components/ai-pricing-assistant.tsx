@@ -1,241 +1,238 @@
 "use client"
 
-import { useEffect, useState } from "react"
-import { useForm, type SubmitHandler } from "react-hook-form"
-import { zodResolver } from "@hookform/resolvers/zod"
-import { z } from "zod"
+import { useMemo, useState } from "react"
+import { AlertTriangle, Check, Loader2, RotateCcw, Sparkles } from "lucide-react"
 
-import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card"
-import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form"
-import { Input } from "@/components/ui/input"
-import { Textarea } from "@/components/ui/textarea"
-import { Button } from "@/components/ui/button"
-import { Skeleton } from "@/components/ui/skeleton"
-import { Sparkles, Bot } from "lucide-react"
-import { useToast } from "@/hooks/use-toast"
+import { cn } from "@/lib/utils"
+import { formatCurrencyWhole, formatPercent } from "@/lib/format"
+import type { CalculationResults, CalculatorFormValues } from "@/lib/calculator"
+import { advisorBlocker, buildAdvisorRequest, requestSuggestion, tierMetrics, type SuggestionFetcher } from "@/lib/price-advisor"
+import { STRATEGIES, STRATEGY_LABELS, type PricingResponse, type Strategy } from "@/lib/pricing-prompt"
+import type { QuoteDraft } from "@/lib/quote-draft"
 import { supabase } from "@/lib/supabase"
-import type { CalculationSnapshot } from "@/lib/calculator"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Skeleton } from "@/components/ui/skeleton"
+import { PriceLadder } from "@/components/quote/price-ladder"
 
-const aiPricingSchema = z.object({
-  productDescription: z.string().min(10, "Por favor, proporciona una descripción más detallada.").max(500),
-  materialUsed: z.string().min(2, "El material es requerido.").max(50),
-  printingTime: z.coerce.number().min(0.1, "El tiempo de impresión debe ser de al menos 0.1 horas."),
-})
+const defaultFetcher: SuggestionFetcher = (request) =>
+  requestSuggestion(request, async () => (await supabase.auth.getSession()).data.session?.access_token ?? null)
 
-type AiPricingFormValues = z.infer<typeof aiPricingSchema>
+type Tier = "minimo" | "recomendado" | "premium"
+const TIERS: { key: Tier; label: string; hint: string }[] = [
+  { key: "minimo", label: "Mínimo", hint: "Lo más bajo que conviene aceptar" },
+  { key: "recomendado", label: "Recomendado", hint: "Equilibra margen y probabilidad de venta" },
+  { key: "premium", label: "Premium", hint: "Si el cliente valora calidad o personalización" },
+]
 
-type SuggestPricingResult = {
-  suggestedPrice: string;
-  reasoning: string;
-};
+type Props = {
+  results: CalculationResults | null
+  /** Validated form values (null while something is invalid) */
+  values: CalculatorFormValues | null
+  draft: QuoteDraft
+  onDraftChange: (patch: Partial<QuoteDraft>) => void
+  /** Apply a per-unit price to the quotation */
+  onApplyPrice: (pricePerUnit: number) => void
+  /** Injectable for previews and tests; defaults to the real API */
+  fetchSuggestion?: SuggestionFetcher
+}
 
-const formatArs = (value: number) =>
-  new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS", maximumFractionDigits: 0 }).format(value)
+type Phase = { name: "idle" } | { name: "loading" } | { name: "error"; message: string } | { name: "done"; response: PricingResponse; askedWith: string }
 
-export default function AiPricingAssistant({ calculation }: { calculation: CalculationSnapshot | null }) {
-  const [isLoading, setIsLoading] = useState(false)
-  const [result, setResult] = useState<SuggestPricingResult | null>(null)
-  const [useCalculation, setUseCalculation] = useState(true)
-  const { toast } = useToast()
+/** Asks the AI for a price range grounded in the shop's own cost and its closed quotations. */
+export function PriceAdvisor({ results, values, draft, onDraftChange, onApplyPrice, fetchSuggestion = defaultFetcher }: Props) {
+  const [strategy, setStrategy] = useState<Strategy>("balanced")
+  const [phase, setPhase] = useState<Phase>({ name: "idle" })
+  const [applied, setApplied] = useState<Tier | null>(null)
 
-  const form = useForm<AiPricingFormValues>({
-    resolver: zodResolver(aiPricingSchema),
-    defaultValues: {
-      productDescription: "",
-      materialUsed: "PLA",
-      printingTime: 1,
-    },
-  })
+  const request = useMemo(() => buildAdvisorRequest({ values, results, draft, strategy }), [values, results, draft, strategy])
+  const blocker = advisorBlocker(draft, results !== null)
+  // The piece data the answer was based on; if it changes afterwards the answer may be out of date
+  const currentKey = request ? JSON.stringify({ ...request, strategy: undefined }) : ""
+  const stale = phase.name === "done" && phase.askedWith !== currentKey
 
-  // Prefill material and print time from the latest calculation
-  useEffect(() => {
-    if (!calculation) return
-    const hours = calculation.printTimeHours + calculation.printTimeMinutes / 60
-    form.setValue("materialUsed", calculation.materialUsed)
-    form.setValue("printingTime", Math.max(0.1, Math.round(hours * 10) / 10))
-  }, [calculation, form])
-
-  const onSubmit: SubmitHandler<AiPricingFormValues> = async (data) => {
-    setIsLoading(true)
-    setResult(null)
+  const ask = async (nextStrategy: Strategy = strategy) => {
+    const asking = buildAdvisorRequest({ values, results, draft, strategy: nextStrategy })
+    if (!asking) return
+    setStrategy(nextStrategy)
+    setApplied(null)
+    setPhase({ name: "loading" })
     try {
-      const { data: { session } } = await supabase.auth.getSession()
-      const res = await fetch("/api/suggest-pricing", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...(session?.access_token && { Authorization: `Bearer ${session.access_token}` }),
-        },
-        body: JSON.stringify({
-          ...data,
-          printingTime: `${data.printingTime} horas`,
-          ...(useCalculation && calculation && {
-            costContext: {
-              costPerUnit: calculation.costPerUnit,
-              sellingPricePerUnit: calculation.sellingPricePerUnit,
-              profitMultiplier: calculation.profitMultiplier,
-            },
-          }),
-        }),
-      })
-      if (!res.ok) {
-        const errorData = await res.json().catch(() => ({ error: `HTTP ${res.status}` }))
-        throw new Error(errorData.error || `Error del servidor (${res.status})`)
-      }
-      const response = await res.json()
-      setResult(response)
+      const response = await fetchSuggestion(asking)
+      setPhase({ name: "done", response, askedWith: JSON.stringify({ ...asking, strategy: undefined }) })
     } catch (error) {
-      console.error("AI Pricing Assistant Error:", error)
-      const msg = error instanceof Error ? error.message : "Error desconocido"
-      toast({
-        variant: "destructive",
-        title: "Error",
-        description: msg,
-      })
-    } finally {
-      setIsLoading(false)
+      setPhase({ name: "error", message: error instanceof Error ? error.message : "No se pudo obtener la sugerencia." })
     }
   }
 
+  const loading = phase.name === "loading"
+
   return (
-    <Card className="w-full">
-      <CardHeader>
-        <CardTitle>Asistente de Precios IA</CardTitle>
-        <CardDescription>
-          Obtén una sugerencia de precio con IA basada en los detalles de tu producto.
-        </CardDescription>
-      </CardHeader>
-      <Form {...form}>
-        <form onSubmit={form.handleSubmit(onSubmit)}>
-          <CardContent className="space-y-4">
-            {calculation ? (
-              <div className="rounded-lg border border-primary/30 bg-secondary/40 p-3 space-y-2">
-                <div className="flex items-center gap-2">
-                  <Checkbox
-                    id="use-calculation"
-                    checked={useCalculation}
-                    onCheckedChange={(checked) => setUseCalculation(checked === true)}
-                  />
-                  <Label htmlFor="use-calculation" className="text-sm font-medium cursor-pointer">
-                    Usar mi último cálculo como base
-                  </Label>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Costo de producción {formatArs(calculation.costPerUnit)} por unidad · precio con tu multiplicador x{calculation.profitMultiplier}: {formatArs(calculation.sellingPricePerUnit)}
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground rounded-lg border border-dashed p-3">
-                Tip: calculá primero una pieza en la calculadora y la IA va a usar tu costo real para sugerir el precio.
-              </p>
-            )}
-            <FormField
-              control={form.control}
-              name="productDescription"
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>Descripción del Producto</FormLabel>
-                  <FormControl>
-                    <Textarea placeholder="Ej: Una miniatura detallada de un castillo de fantasía" {...field} />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <FormField
-                control={form.control}
-                name="materialUsed"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Material Usado</FormLabel>
-                    <FormControl>
-                      <Input placeholder="Ej: PLA, ABS, PETG" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-              <FormField
-                control={form.control}
-                name="printingTime"
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>Tiempo de Impresión (horas)</FormLabel>
-                    <FormControl>
-                      <Input type="number" step="0.1" {...field} />
-                    </FormControl>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-            </div>
-          </CardContent>
-          <CardFooter>
-            <Button type="submit" disabled={isLoading} className="bg-accent hover:bg-accent/90">
-              <Sparkles className="mr-2 h-4 w-4" />
-              {isLoading ? "Obteniendo Sugerencia..." : "Obtener Sugerencia"}
-            </Button>
-          </CardFooter>
-        </form>
-      </Form>
-      
-      {(isLoading || result) && (
-        <CardContent>
-          {isLoading && <SuggestionSkeleton />}
-          {result && !isLoading && (
-            <Card className="bg-secondary/50 border-accent">
-              <CardHeader className="flex flex-row items-start gap-4">
-                <Bot className="h-8 w-8 text-accent shrink-0 mt-1"/>
-                <div>
-                  <CardTitle>Sugerencia de la IA</CardTitle>
-                  <CardDescription>
-                    Basado en la información proporcionada, aquí tienes una sugerencia de precio.
-                  </CardDescription>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Precio Sugerido</p>
-                  <p className="text-3xl font-bold text-accent">{result.suggestedPrice}</p>
-                </div>
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Razonamiento</p>
-                  <p className="text-sm text-foreground/90 whitespace-pre-wrap">{result.reasoning}</p>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-        </CardContent>
+    <section aria-labelledby="advisor-heading" className="space-y-4 rounded-lg border bg-card p-4">
+      <div className="flex items-center gap-2">
+        <Sparkles className="h-4 w-4 text-primary" aria-hidden />
+        <h2 id="advisor-heading" className="text-sm font-semibold">Asesor de precio con IA</h2>
+      </div>
+
+      {phase.name !== "done" && (
+        <p className="text-sm text-muted-foreground">
+          Mira tu costo real y las cotizaciones parecidas que ya cerraste, y te propone un rango de precio por unidad.
+        </p>
       )}
-    </Card>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="advisor-piece">Pieza</Label>
+        <Input
+          id="advisor-piece"
+          autoComplete="off"
+          placeholder="Ej: Llavero dragón articulado"
+          maxLength={120}
+          value={draft.pieceName}
+          onChange={(e) => onDraftChange({ pieceName: e.target.value })}
+        />
+      </div>
+
+      <StrategyPicker value={strategy} onChange={(s) => (phase.name === "done" ? void ask(s) : setStrategy(s))} disabled={loading} />
+
+      {phase.name !== "done" && (
+        <div className="space-y-2">
+          <Button type="button" className="gap-2" disabled={loading || blocker !== null} aria-describedby={blocker ? "advisor-blocker" : undefined} onClick={() => void ask()}>
+            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            {loading ? "Analizando…" : "Pedir sugerencia"}
+          </Button>
+          {blocker && !loading && <p id="advisor-blocker" className="text-xs text-muted-foreground">{blocker}</p>}
+        </div>
+      )}
+
+      {loading && (
+        <div role="status" className="space-y-2">
+          <p className="text-sm text-muted-foreground">Analizando tu costo y tus cotizaciones parecidas…</p>
+          <Skeleton className="h-24 w-full" />
+          <Skeleton className="h-4 w-3/4" />
+        </div>
+      )}
+
+      {phase.name === "error" && (
+        <div role="alert" className="flex flex-col gap-2 rounded-md bg-destructive/20 p-3 text-sm sm:flex-row sm:items-center sm:justify-between">
+          <p>{phase.message}</p>
+          <Button type="button" size="sm" variant="outline" className="gap-1.5 self-start" onClick={() => void ask()}>
+            <RotateCcw className="h-3.5 w-3.5" /> Reintentar
+          </Button>
+        </div>
+      )}
+
+      {phase.name === "done" && results && (
+        <Result
+          response={phase.response}
+          results={results}
+          stale={stale}
+          applied={applied}
+          loading={loading}
+          onApply={(tier, price) => { setApplied(tier); onApplyPrice(price) }}
+          onAskAgain={() => void ask()}
+        />
+      )}
+    </section>
   )
 }
 
-function SuggestionSkeleton() {
+function StrategyPicker({ value, onChange, disabled }: { value: Strategy; onChange: (s: Strategy) => void; disabled: boolean }) {
   return (
-    <Card className="bg-secondary/50">
-      <CardHeader className="flex flex-row items-start gap-4">
-        <Skeleton className="h-8 w-8 rounded-full" />
-        <div className="space-y-2">
-            <Skeleton className="h-4 w-48" />
-            <Skeleton className="h-3 w-64" />
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div>
-          <Skeleton className="h-4 w-24 mb-2" />
-          <Skeleton className="h-10 w-32" />
-        </div>
-        <div>
-          <Skeleton className="h-4 w-20 mb-2" />
-          <Skeleton className="h-4 w-full" />
-          <Skeleton className="h-4 w-full mt-2" />
-          <Skeleton className="h-4 w-3/4 mt-2" />
-        </div>
-      </CardContent>
-    </Card>
+    <div className="space-y-1.5">
+      <p id="strategy-label" className="text-sm font-medium">Qué priorizás</p>
+      <div role="radiogroup" aria-labelledby="strategy-label" className="flex flex-wrap gap-2">
+        {STRATEGIES.map((s) => (
+          <button
+            key={s}
+            type="button"
+            role="radio"
+            aria-checked={value === s}
+            disabled={disabled}
+            onClick={() => onChange(s)}
+            className={cn(
+              "min-h-9 rounded-full border px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60",
+              value === s ? "border-primary bg-primary/15 font-medium" : "text-muted-foreground hover:bg-secondary hover:text-foreground",
+            )}
+          >
+            {STRATEGY_LABELS[s]}
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function Result({ response, results, stale, applied, loading, onApply, onAskAgain }: {
+  response: PricingResponse
+  results: CalculationResults
+  stale: boolean
+  applied: Tier | null
+  loading: boolean
+  onApply: (tier: Tier, pricePerUnit: number) => void
+  onAskAgain: () => void
+}) {
+  const cost = results.costPerUnit
+  const current = results.sellingPricePerUnit
+
+  return (
+    <div className="space-y-5">
+      {stale && (
+        <p role="status" className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-md bg-yellow-500/10 p-3 text-sm">
+          Cambiaste datos de la pieza desde esta sugerencia.
+          <button type="button" className="underline underline-offset-2" onClick={onAskAgain}>Pedir de nuevo</button>
+        </p>
+      )}
+
+      <PriceLadder cost={cost} minimo={response.minimo} recomendado={response.recomendado} premium={response.premium} current={current} />
+
+      <ul className="grid gap-2 sm:grid-cols-3">
+        {TIERS.map(({ key, label, hint }) => {
+          const price = response[key]
+          const { margin, vsCurrent } = tierMetrics(price, cost, current)
+          const isRecommended = key === "recomendado"
+          return (
+            <li key={key} className={cn("flex flex-col justify-between gap-3 rounded-md border p-3", isRecommended && "border-primary/50 bg-primary/5")}>
+              <div>
+                <p className="text-xs text-muted-foreground" title={hint}>{label} · por unidad</p>
+                <p className="text-xl font-bold tabular-nums">{formatCurrencyWhole(price)}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">margen {formatPercent(margin)}</p>
+                <p className="text-xs text-muted-foreground tabular-nums">
+                  {Math.abs(vsCurrent) < 0.5 ? "igual a tu precio" : `${vsCurrent > 0 ? "+" : "−"}${formatPercent(Math.abs(vsCurrent))} vs tu precio`}
+                </p>
+                {results.quantity > 1 && <p className="text-xs text-muted-foreground tabular-nums">× {results.quantity} = {formatCurrencyWhole(price * results.quantity)}</p>}
+              </div>
+              <Button type="button" size="sm" variant={isRecommended ? "default" : "outline"} className="gap-1.5" onClick={() => onApply(key, price)}>
+                {applied === key ? <><Check className="h-3.5 w-3.5" /> Aplicado</> : isRecommended ? "Usar este precio" : "Usar"}
+              </Button>
+            </li>
+          )
+        })}
+      </ul>
+
+      {response.alerta && (
+        <p role="note" className="flex items-start gap-2 rounded-md bg-yellow-500/10 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-yellow-400" aria-hidden /> {response.alerta}
+        </p>
+      )}
+
+      <div className="space-y-2">
+        <h3 className="text-sm font-semibold">Por qué</h3>
+        <ul className="list-disc space-y-1.5 pl-5 text-sm marker:text-muted-foreground">
+          {response.razones.map((reason, i) => <li key={i}>{reason}</li>)}
+        </ul>
+      </div>
+
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+        <p className="text-xs text-muted-foreground">
+          {response.similarCount > 0
+            ? `Se basó en tu costo y en ${response.similarCount} cotización${response.similarCount === 1 ? "" : "es"} parecida${response.similarCount === 1 ? "" : "s"} ya cerrada${response.similarCount === 1 ? "" : "s"}.`
+            : "No encontró cotizaciones parecidas cerradas: se basó solo en tu costo y en el mercado."}
+        </p>
+        <Button type="button" size="sm" variant="ghost" className="gap-1.5" disabled={loading} onClick={onAskAgain}>
+          <RotateCcw className="h-3.5 w-3.5" /> Pedir de nuevo
+        </Button>
+      </div>
+    </div>
   )
 }

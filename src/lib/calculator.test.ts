@@ -11,7 +11,6 @@ import {
   marginPercent,
   multiplierForPrice,
   profitPerHour,
-  toCalculationSnapshot,
   type CalculatorFormValues,
 } from "./calculator";
 import type { Printer } from "./supabase";
@@ -131,21 +130,14 @@ describe("margin, profit per hour and multiplier helpers", () => {
     expect(multiplierForPrice(5000, 0)).toBeNull();
     expect(multiplierForPrice(NaN, 100)).toBeNull();
   });
-});
 
-describe("toCalculationSnapshot", () => {
-  it("shares per-unit cost and price plus the inputs the AI assistant prefills", () => {
-    const results = calculateResults({ ...baseValues, quantity: 3 });
-    const snapshot = toCalculationSnapshot({ ...baseValues, quantity: 3 }, results);
-    expect(snapshot).toEqual({
-      materialUsed: "PLA",
-      printTimeHours: 2,
-      printTimeMinutes: 30,
-      costPerUnit: results.costPerUnit, // per unit, not the 3-unit total
-      sellingPricePerUnit: results.sellingPricePerUnit,
-      profitMultiplier: 3,
-    });
-    expect(snapshot.costPerUnit).toBeCloseTo(2350);
+  it("keeps enough precision for the price to land on the typed amount", () => {
+    const cost = 2500;
+    const m = multiplierForPrice(8990, cost)!;
+    expect(m).toBeCloseTo(3.596, 4);
+    expect(Math.round(cost * m)).toBe(8990); // with 2 decimals this would have been 9.000
+    const odd = multiplierForPrice(7777, 2350)!;
+    expect(Math.abs(2350 * odd - 7777)).toBeLessThan(0.5);
   });
 });
 

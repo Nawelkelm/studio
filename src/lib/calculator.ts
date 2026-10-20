@@ -1,6 +1,5 @@
 import { z } from "zod";
 import type { Printer } from "@/lib/supabase";
-import type { CostContext } from "@/lib/pricing-prompt";
 
 export const calculatorSchema = z.object({
   filamentCostPerKg: z.coerce.number().min(0).default(15000),
@@ -26,24 +25,6 @@ export type CalculationResults = {
   sellingPrice: number; mercadoLibrePrice: number; profitAmount: number;
   costPerUnit: number; sellingPricePerUnit: number; quantity: number;
 };
-
-/** Last calculation shared with the AI assistant (per-unit amounts in ARS). */
-export type CalculationSnapshot = CostContext & {
-  materialUsed: string;
-  printTimeHours: number;
-  printTimeMinutes: number;
-};
-
-export function toCalculationSnapshot(values: CalculatorFormValues, results: CalculationResults): CalculationSnapshot {
-  return {
-    materialUsed: values.materialUsed,
-    printTimeHours: values.printTimeHours,
-    printTimeMinutes: values.printTimeMinutes,
-    costPerUnit: results.costPerUnit,
-    sellingPricePerUnit: results.sellingPricePerUnit,
-    profitMultiplier: values.profitMultiplier,
-  };
-}
 
 // MercadoLibre descuenta la comisión del precio de venta: para recibir el precio objetivo hay que dividir por (1 - comisión)
 export const MERCADOLIBRE_FEE_RATE = 0.16;
@@ -112,11 +93,14 @@ export function profitPerHour(profit: number, printTimeHours: number, printTimeM
 export const MIN_MULTIPLIER = 1;
 export const MAX_MULTIPLIER = 10;
 
-/** Multiplier that yields `targetPricePerUnit` over `costPerUnit`, clamped to the allowed range (2 decimals). */
+/**
+ * Multiplier that yields `targetPricePerUnit` over `costPerUnit`, clamped to the allowed range.
+ * Kept to 4 decimals so the resulting price lands on the typed amount (2 decimals would move it by cost x 0,005).
+ */
 export function multiplierForPrice(targetPricePerUnit: number, costPerUnit: number): number | null {
   if (!(costPerUnit > 0) || !Number.isFinite(targetPricePerUnit)) return null;
   const raw = targetPricePerUnit / costPerUnit;
-  return Math.round(Math.min(MAX_MULTIPLIER, Math.max(MIN_MULTIPLIER, raw)) * 100) / 100;
+  return Math.round(Math.min(MAX_MULTIPLIER, Math.max(MIN_MULTIPLIER, raw)) * 10000) / 10000;
 }
 
 // Fields synced to the Supabase printers table (shared across all users) and their DB columns

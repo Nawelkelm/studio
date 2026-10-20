@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
-import { buildPricingPrompt, parsePricingRequest } from "@/lib/pricing-prompt";
+import {
+  DECIDED_COLUMNS, SUGGESTION_RESPONSE_SCHEMA, buildPricingPrompt, normalizeSuggestion, parsePricingRequest, selectSimilar,
+  suggestionSchema, type DecidedRow, type PricingResponse,
+} from "@/lib/pricing-prompt";
 
 export const runtime = "edge";
 
 const RATE_LIMIT_MAX_REQUESTS = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+const HISTORY_LIMIT = 100;
+const MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
 
 // Best-effort limiter: state lives in each edge instance, so it caps bursts but is not a global quota.
 const requestLog = new Map<string, number[]>();
@@ -26,16 +31,19 @@ function isRateLimited(userId: string): boolean {
   return false;
 }
 
-// Validates the Supabase session token sent by the browser and returns the user id (null if invalid).
-async function getAuthenticatedUserId(req: NextRequest): Promise<string | null> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+function supabaseAccess(req: NextRequest) {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!supabaseUrl || !anonKey || !token) return null;
+  if (!url || !anonKey || !token) return null;
+  return { url, headers: { apikey: anonKey, Authorization: `Bearer ${token}` } };
+}
 
-  const res = await fetch(`${supabaseUrl}/auth/v1/user`, {
-    headers: { apikey: anonKey, Authorization: `Bearer ${token}` },
-  });
+// Validates the Supabase session token sent by the browser and returns the user id (null if invalid).
+async function getAuthenticatedUserId(req: NextRequest): Promise<string | null> {
+  const access = supabaseAccess(req);
+  if (!access) return null;
+  const res = await fetch(`${access.url}/auth/v1/user`, { headers: access.headers });
   if (!res.ok) return null;
   const user = await res.json().catch(() => null);
   return typeof user?.id === "string" ? user.id : null;
@@ -43,18 +51,32 @@ async function getAuthenticatedUserId(req: NextRequest): Promise<string | null> 
 
 // Asks the database whether the caller's account was approved by an administrator (RPC runs with the caller's token).
 async function isActiveUser(req: NextRequest): Promise<boolean> {
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  const token = req.headers.get("authorization")?.replace(/^Bearer\s+/i, "");
-  if (!supabaseUrl || !anonKey || !token) return false;
-
-  const res = await fetch(`${supabaseUrl}/rest/v1/rpc/is_active_user`, {
+  const access = supabaseAccess(req);
+  if (!access) return false;
+  const res = await fetch(`${access.url}/rest/v1/rpc/is_active_user`, {
     method: "POST",
-    headers: { apikey: anonKey, Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    headers: { ...access.headers, "Content-Type": "application/json" },
     body: "{}",
   });
   if (!res.ok) return false;
   return (await res.json().catch(() => null)) === true;
+}
+
+/** The shop's closed quotations, read with the caller's own permissions. Failing here only means "no history". */
+async function loadDecidedRows(req: NextRequest): Promise<DecidedRow[]> {
+  const access = supabaseAccess(req);
+  if (!access) return [];
+  try {
+    const res = await fetch(
+      `${access.url}/rest/v1/quotations?select=${DECIDED_COLUMNS}&status=in.(aprobada,rechazada)&order=created_at.desc&limit=${HISTORY_LIMIT}`,
+      { headers: access.headers },
+    );
+    if (!res.ok) return [];
+    const rows = await res.json().catch(() => []);
+    return Array.isArray(rows) ? (rows as DecidedRow[]) : [];
+  } catch {
+    return [];
+  }
 }
 
 export async function POST(req: NextRequest) {
@@ -79,10 +101,7 @@ export async function POST(req: NextRequest) {
     const apiKey = process.env.GOOGLE_GENAI_API_KEY;
     if (!apiKey) {
       console.error("GOOGLE_GENAI_API_KEY is not set");
-      return NextResponse.json(
-        { error: "API key no configurada" },
-        { status: 500 }
-      );
+      return NextResponse.json({ error: "API key no configurada" }, { status: 500 });
     }
 
     const body = await req.json().catch(() => null);
@@ -90,22 +109,27 @@ export async function POST(req: NextRequest) {
     if (!parsed.ok) {
       return NextResponse.json({ error: parsed.error }, { status: 400 });
     }
+    const request = parsed.data;
 
-    const prompt = buildPricingPrompt(parsed.data);
+    const similar = selectSimilar(await loadDecidedRows(req), {
+      pieceName: request.pieceName,
+      materialUsed: request.materialUsed,
+      weightGrams: request.weightGrams,
+      printTimeHours: request.printTimeHours,
+    });
+    const prompt = buildPricingPrompt(request, similar);
 
-    const models = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-2.0-flash-lite"];
     let lastError = "";
-
-    for (const model of models) {
-      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
-
-      const response = await fetch(url, {
+    for (const model of MODELS) {
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
             responseMimeType: "application/json",
+            responseSchema: SUGGESTION_RESPONSE_SCHEMA,
+            temperature: 0.4,
           },
         }),
       });
@@ -116,25 +140,25 @@ export async function POST(req: NextRequest) {
         continue;
       }
 
-      const data = await response.json();
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!text) {
-        lastError = "Empty response from AI";
-        console.error(`Empty response from ${model}`);
+      const data = await response.json().catch(() => null);
+      const text = data?.candidates?.[0]?.content?.parts?.[0]?.text;
+      let json: unknown = null;
+      try { json = text ? JSON.parse(text) : null; } catch { /* handled below */ }
+      const suggestion = suggestionSchema.safeParse(json);
+      if (!suggestion.success) {
+        lastError = "Respuesta de la IA fuera de formato";
+        console.error(`Unusable answer from ${model}`);
         continue;
       }
 
-      try {
-        const parsed = JSON.parse(text);
-        return NextResponse.json(parsed);
-      } catch {
-        return NextResponse.json(
-          { suggestedPrice: "N/A", reasoning: text },
-        );
-      }
+      const result: PricingResponse = {
+        ...normalizeSuggestion(suggestion.data, request.costPerUnit),
+        similarCount: similar.length,
+      };
+      return NextResponse.json(result);
     }
 
+    console.error("All models failed:", lastError.substring(0, 200));
     return NextResponse.json(
       { error: "No se pudo obtener una respuesta de la IA. Intentá de nuevo en unos minutos." },
       { status: 502 }
@@ -142,9 +166,6 @@ export async function POST(req: NextRequest) {
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
     console.error("Suggest pricing route error:", message);
-    return NextResponse.json(
-      { error: "Error interno al consultar la IA" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Error interno al consultar la IA" }, { status: 500 });
   }
 }

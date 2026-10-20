@@ -3,20 +3,18 @@
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { useAuth } from "@/components/auth-provider";
-import type { CalculationSnapshot } from "@/lib/calculator";
 import type { QuotePrefill } from "@/lib/quote-prefill";
 import { supabase } from "@/lib/supabase";
 import LoginScreen from "@/components/login-screen";
 import AccessScreen from "@/components/access-screen";
 import CalculatorForm from "@/components/calculator-form";
-import AiPricingAssistant from "@/components/ai-pricing-assistant";
 import QuotationRegistry from "@/components/quotation-registry";
 import UserAdmin from "@/components/user-admin";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Calculator, Sparkles, ClipboardList, LogOut, Loader2, Users } from "lucide-react";
+import { Calculator, ClipboardList, LogOut, Loader2, Users } from "lucide-react";
 import Image from "next/image";
 
 export default function AppShell() {
@@ -47,8 +45,6 @@ export default function AppShell() {
 }
 
 function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: boolean; onSignOut: () => Promise<void> }) {
-  // Last calculator result, shared with the AI assistant
-  const [calculation, setCalculation] = useState<CalculationSnapshot | null>(null);
   const [pendingCount, setPendingCount] = useState(0);
   const [tab, setTab] = useState("calculator");
   // A quotation chosen in the registry to be duplicated in the calculator
@@ -112,15 +108,12 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
 
       {/* Tabs */}
       <Tabs value={tab} onValueChange={setTab} className="w-full max-w-7xl">
-        <TabsList className={`grid w-full mx-auto mb-8 ${isAdmin ? "max-w-2xl grid-cols-4" : "max-w-lg grid-cols-3"}`}>
+        <TabsList className={`grid w-full mx-auto mb-8 ${isAdmin ? "max-w-lg grid-cols-3" : "max-w-sm grid-cols-2"}`}>
           <TabsTrigger value="calculator" className="gap-2">
             <Calculator className="h-4 w-4" /> <span className="hidden sm:inline">Calculadora</span>
           </TabsTrigger>
           <TabsTrigger value="registry" className="gap-2">
             <ClipboardList className="h-4 w-4" /> <span className="hidden sm:inline">Cotizaciones</span>
-          </TabsTrigger>
-          <TabsTrigger value="ai" className="gap-2">
-            <Sparkles className="h-4 w-4" /> <span className="hidden sm:inline">Asistente IA</span>
           </TabsTrigger>
           {isAdmin && (
             <TabsTrigger value="users" className="gap-2">
@@ -131,21 +124,16 @@ function AuthenticatedApp({ user, isAdmin, onSignOut }: { user: User; isAdmin: b
             </TabsTrigger>
           )}
         </TabsList>
-        {/* Calculator and AI tabs stay mounted (hidden when inactive) so results and typed data survive tab switches.
+        {/* The calculator stays mounted (hidden when inactive) so results and typed data survive tab switches.
             The registry and users tabs unmount on purpose: they reload their data every time they are opened. */}
         <TabsContent value="calculator" forceMount className="data-[state=inactive]:hidden">
-          <CalculatorForm onCalculated={setCalculation} onNavigate={setTab} prefill={prefill} />
+          <CalculatorForm onNavigate={setTab} prefill={prefill} />
         </TabsContent>
         <TabsContent value="registry">
           <QuotationRegistry
             onDuplicate={(p) => { setPrefill(p); setTab("calculator"); }}
             onGoToCalculator={() => setTab("calculator")}
           />
-        </TabsContent>
-        <TabsContent value="ai" forceMount className="data-[state=inactive]:hidden">
-          <div className="max-w-2xl mx-auto">
-            <AiPricingAssistant calculation={calculation} />
-          </div>
         </TabsContent>
         {isAdmin && (
           <TabsContent value="users">
